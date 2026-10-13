@@ -275,6 +275,53 @@ fn ait_sections_and_damage_values_pin_the_real_data() {
 }
 
 #[test]
+fn brain_runs_on_real_tables() {
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    use rustfighter::fight::rng::Rng;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("all 36 gameplay tables load");
+    assert_eq!(assets.frm.len(), 12);
+    assert_eq!(assets.ani.len(), 12);
+    assert_eq!(assets.ait.len(), 12);
+
+    // KEN (index 0) vs RYU (index 3): 600 frames of idle input + AI off.
+    let mut st = FightState::new(0, 3, 0);
+    st.rng = Rng::seeded(0x1234, 0x5678);
+    for _ in 0..600 {
+        st.run_frame(&assets, [0, 0], [false, false]);
+    }
+    assert_eq!(st.players[0].energy, 100);
+    assert_eq!(st.players[1].energy, 100);
+    for p in &st.players {
+        assert!(p.x >= 0 && p.x <= 0x110, "x out of stage: {}", p.x);
+    }
+    // The action/script state must be coherent after 600 frames.
+    for i in 0..2 {
+        let script_id = (st.objects[i].hotspot / 4) as usize;
+        assert!(script_id < 64, "script id out of range: {script_id}");
+        let frame = st.objects[i].frame as usize;
+        assert!(frame < 200, "ani index out of range: {frame}");
+    }
+
+    // Reaction path end-to-end with real data: P2 is hit by a KEN attack 0x34.
+    // KEN power[0x34] = 13 -> ((13*2*0xD9)>>8)>>1 = 11 damage; score 150.
+    st.players[1].flags_a |= rustfighter::fight::hit::WAS_HIT;
+    st.players[1].reaction_anim = 0x34;
+    let before = st.players[1].energy;
+    st.run_frame(&assets, [0, 0], [false, false]);
+    assert_eq!(st.players[1].energy, before - 11, "react damage");
+    assert_eq!(st.score[1], 150, "reaction score");
+    // KO latches when energy reaches zero.
+    st.players[1].energy = 0;
+    st.run_frame(&assets, [0, 0], [false, false]);
+    assert!(st.players[1].flags_a & rustfighter::fight::hit::KO_FLAG != 0);
+    assert!(st.ko_flag);
+}
+
+#[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");

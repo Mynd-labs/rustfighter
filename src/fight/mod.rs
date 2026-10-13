@@ -12,6 +12,7 @@
 //! resolution → round/match → per-character handlers → HUD/stage.
 
 pub mod ait;
+pub mod brain;
 pub mod ani;
 pub mod fighter;
 pub mod frm;

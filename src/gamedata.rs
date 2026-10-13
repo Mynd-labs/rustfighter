@@ -48,6 +48,13 @@ pub fn engine_char_index(code: &str) -> Option<usize> {
     ENGINE_CHARACTERS.iter().position(|&c| c == code)
 }
 
+/// Asset-name stems of the per-character gameplay tables in engine order:
+/// `frm<STEM>`, `ani<STEM>`, `ait<STEM>`.
+pub const ENGINE_TABLE_STEMS: [&str; 12] = [
+    "KEN", "GUILE", "EHONDO", "RYU", "ZANGEIF", "CHUNLI", "DHALISM", "BLANKA", "BALROG", "VEGA",
+    "SAGAT", "MBISON",
+];
+
 /// A screen-sized image record with an optional companion palette name.
 #[derive(Debug, Clone)]
 pub struct ScreenInfo {

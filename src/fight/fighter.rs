@@ -77,19 +77,23 @@ pub struct Fighter {
     pub b15: u8,
     /// `+0x16` 100 at spawn.
     pub b16: u8,
+    /// `+0x17` raw input byte / last press (written by `0x17967`).
+    pub b17: u8,
     /// `+0x18` `0xFF` at spawn.
     pub b18: u8,
     /// `+0x19` 0 at spawn.
     pub b19: u8,
-    /// `+0x1A` 2 at spawn.
-    pub w1a: u16,
+    /// `+0x1A` AI decision delay in frames (2 at spawn).
+    pub b1a: u8,
     /// `+0x1B` 0 at spawn.
     pub b1b: u8,
     /// `+0x1E` reaction animation id — the action id that last hit this
     /// fighter (written by `0x122A0`, consumed by the damage routine).
     pub reaction_anim: u8,
-    /// `+0x1F` 0 at spawn.
+    /// `+0x1F` 0 at spawn; movement lockout (frames).
     pub b1f: u8,
+    /// `+0x20` hit-connected timer (decrements at `0x17830`).
+    pub b20: u8,
     /// `+0x21` pending AI timer delta.
     pub b21: u8,
     /// `+0x22` AI action timer (`10 * action / 6`).
@@ -112,12 +116,14 @@ impl Fighter {
             energy: 100,
             b15: 0,
             b16: 100,
+            b17: 0,
             b18: 0xFF,
             b19: 0,
-            w1a: 2,
+            b1a: 2,
             b1b: 0,
             reaction_anim: 0,
             b1f: 0,
+            b20: 0,
             b21: 0,
             ai_timer: 0,
         }
@@ -283,6 +289,13 @@ impl DrawObject {
     }
 }
 
+impl DrawObject {
+    /// Low word of the fixed-point accumulator (`+0x26`).
+    pub fn w28(&self) -> u16 {
+        (self.pos_acc & 0xFFFF) as u16
+    }
+}
+
 /// Sprite handle sentinel meaning "draw nothing" (`sprBLANKSPR`, same value as
 /// in [`crate::fight::ani`] records).
 pub const SPRITE_BLANK: u16 = crate::fight::ani::SPRITE_BLANK;
@@ -296,7 +309,7 @@ mod tests {
         let f = Fighter::spawn(80, false);
         assert_eq!(f.y, 200);
         assert_eq!(f.energy, 100);
-        assert_eq!(f.w1a, 2);
+        assert_eq!(f.b1a, 2);
         assert_eq!(f.b0b, 100);
         assert_eq!(f.b0d, 2);
         assert_eq!(f.b16, 100);
