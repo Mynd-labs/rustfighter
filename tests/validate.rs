@@ -81,6 +81,36 @@ fn embedded_assets_are_complete() {
 }
 
 #[test]
+fn sound_assets_decode() {
+    use rustfighter::sound::SoundBank;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let bank = SoundBank::load(&gd).expect("sound bank decodes");
+    assert_eq!(bank.sfx.len(), 30, "30 VOC samples");
+    assert_eq!(bank.tune.len(), 6, "6 TUNE tracks");
+    assert_eq!(bank.at.len(), 6, "6 AT tracks");
+    assert!(bank.rfx.is_some(), "shared RFX track");
+    let buzz = bank.sfx.iter().find(|v| v.name == "vocBUZZ").unwrap();
+    assert_eq!(buzz.blocks, 8, "vocBUZZ has 8 blocks");
+    for voc in &bank.sfx {
+        assert!(
+            [4000, 5000, 5988, 6993, 8000, 10000].contains(&voc.rate_hz),
+            "{} rate {}",
+            voc.name,
+            voc.rate_hz
+        );
+        assert!(!voc.samples.is_empty());
+    }
+    for smf in bank.tune.iter().chain(bank.at.iter()) {
+        assert_eq!(smf.division, 96, "{} division", smf.name);
+        assert!(!smf.events.is_empty(), "{} events", smf.name);
+    }
+    assert!(bank.speaker.len() >= 15, "tun* tables: {}", bank.speaker.len());
+}
+
+#[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");

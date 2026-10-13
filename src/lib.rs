@@ -21,4 +21,5 @@ pub mod index;
 pub mod input;
 pub mod lzw;
 pub mod palette;
+pub mod sound;
 pub mod sprite;
