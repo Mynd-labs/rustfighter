@@ -19,7 +19,7 @@ if [ ! -f "$game/INDEX.SF2" ] && [ ! -f "$game/index.sf2" ]; then
     exit 1
 fi
 
-SF2_DIR="$game" cargo build --release --features embedded --target-dir target/standalone
+SF2_DIR="$game" cargo build --release --features embedded,audio --target-dir target/standalone
 
 cp target/standalone/release/rfplay "$out"
 cp target/standalone/release/rfdump "${out}-rfdump"

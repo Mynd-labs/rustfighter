@@ -18,7 +18,7 @@ if [ ! -f "$game/INDEX.SF2" ] && [ ! -f "$game/index.sf2" ]; then
     exit 1
 fi
 
-cargo build --release
+cargo build --release --features audio
 
 rm -rf "$out"
 mkdir -p "$out/street-fighter-ii"
@@ -57,7 +57,7 @@ chmod +x "$out/rfplay" "$out/rfdump"
 strip "$out/rfplay" "$out/rfdump" 2>/dev/null || true
 
 # Also include a single-file standalone build with the data inside the binary.
-if SF2_DIR="$game" cargo build --release --features embedded \
+if SF2_DIR="$game" cargo build --release --features embedded,audio \
     --target-dir target/standalone >/dev/null 2>&1; then
     cp target/standalone/release/rfplay "$out/rfplay-standalone"
     chmod +x "$out/rfplay-standalone"

@@ -63,8 +63,9 @@ be published or redistributed. Official releases ship **without** game data.
 | Screens (intro, title, world-select, messages) | ✅ with colour-key handling |
 | Stages (64-px vertical slices, TOP+BOT) | ✅ assembled and pannable |
 | Windowed player (`rfplay`, minifb) | ✅ 4 modes, keyboard controls |
+| **Playable fight (`rfight`)** | ✅ title → character select → best-of-3 fights (AI, specials, fireballs, damage, KO, rounds, continue) |
+| Sound | ✅ data layer (VOC/SMF/tun); SFX playback with `--features audio` |
 | Headless dumper (`rfdump`) | ✅ PNG evidence + `index.tsv` |
-| Fight engine / game logic | ❌ not yet ported (next milestone) |
 
 ## Requirements
 
@@ -76,9 +77,14 @@ be published or redistributed. Official releases ship **without** game data.
 ## Build & run
 
 ```bash
-cargo build --release
+# Playable fight build (add ",audio" for sound)
+cargo build --release --features audio
+./target/release/rfight --game /path/to/street-fighter-ii
+#   arrows move • Enter punch • Space kick • motions: QCF+P hadouken, etc.
+#   Esc back/quit • F1 hitbox view • R resets the round
 
-# Interactive player (Linux desktop; opens a 320x200 window, scaled)
+# Asset browser
+cargo build --release
 ./target/release/rfplay --game /path/to/street-fighter-ii
 
 # No-window verification: renders one frame of each mode to PNG

@@ -110,6 +110,8 @@ fn main() {
         wins: [0, 0],
         round_no: 1,
         opponent_index: 0,
+        continues_left: 3,
+        continue_timer: 0,
     };
     game_state.fights.objects[0].y = GROUND;
     game_state.fights.objects[1].y = GROUND;
@@ -312,6 +314,22 @@ fn main() {
                     game_state.phase = Phase::Title;
                 }
             }
+            Phase::Continue => {
+                game_state.continue_timer = game_state.continue_timer.saturating_sub(1);
+                let confirmed = game_state.keys.just_pressed(0, Button::Punch)
+                    || game_state.keys.just_pressed(0, Button::Kick);
+                if confirmed {
+                    game_state.continues_left -= 1;
+                    let c1 = (game_state.fights.objects[0].char2 / 2) as usize;
+                    let c2 = game_state.opponent_index % 12;
+                    game_state.start_fight_indices(c1, c2);
+                } else if game_state.continue_timer == 0
+                    || window.is_key_pressed(Key::Escape, minifb::KeyRepeat::No)
+                {
+                    game_state.phase = Phase::Title;
+                    game_state.continues_left = 3;
+                }
+            }
         }
         let canvas = game_state.render();
         let rgb = canvas.to_rgb();
@@ -328,6 +346,7 @@ enum Phase {
     Title,
     SelectScreen,
     Fight,
+    Continue,
 }
 
 /// The keys we feed through the scancode layer (CONFIG.SF2 defaults).
@@ -370,6 +389,9 @@ struct Game {
     round_no: u8,
     /// Opponent ladder index (`0x451A`-driven roster progression).
     opponent_index: usize,
+    /// Remaining continues (`0x2A3E` = 3) and the countdown frames.
+    continues_left: u8,
+    continue_timer: u32,
 }
 
 impl Game {
@@ -493,7 +515,13 @@ impl Game {
                 } else if self.wins[1] >= 2 {
                     self.wins = [0, 0];
                     self.round_no = 1;
-                    self.phase = Phase::Title;
+                    if self.continues_left > 0 {
+                        self.phase = Phase::Continue;
+                        self.continue_timer = 10 * 60; // 10 seconds
+                    } else {
+                        self.phase = Phase::Title;
+                        self.continues_left = 3;
+                    }
                 } else {
                     self.round_no += 1;
                     self.reset_round();
@@ -506,6 +534,7 @@ impl Game {
         match self.phase {
             Phase::Title => return self.render_title(),
             Phase::SelectScreen => return self.render_select(),
+            Phase::Continue => return self.render_continue(),
             Phase::Fight => {}
         }
         let mut canvas = Canvas::new(W, H);
@@ -637,6 +666,18 @@ impl Game {
         binfont::draw_text(&mut canvas, "STREET FIGHTER II - RUST PORT", 40, 110, 254);
         binfont::draw_text(&mut canvas, "PRESS ENTER OR SPACE TO START", 44, 130, 254);
         binfont::draw_text(&mut canvas, "ARROWS MOVE   ENTER/SPACE CONFIRM", 34, 150, 254);
+        canvas
+    }
+
+    fn render_continue(&mut self) -> Canvas {
+        let mut canvas = Canvas::new(W, H);
+        canvas.clear(0);
+        canvas.palette.colors.resize(256, [0, 0, 0]);
+        canvas.palette.colors[254] = [255, 255, 255];
+        binfont::draw_text(&mut canvas, "CONTINUE?", 120, 70, 254);
+        let secs = self.continue_timer / 60;
+        binfont::draw_text(&mut canvas, &format!("{secs:2}"), 152, 90, 254);
+        binfont::draw_text(&mut canvas, "PRESS ENTER/SPACE TO CONTINUE", 40, 120, 254);
         canvas
     }
 
