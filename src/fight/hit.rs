@@ -33,36 +33,39 @@ pub enum BlockVerdict {
 }
 
 /// Inputs for [`block_rule`], mirroring the registers at the `CALL AX`.
+///
+/// Engine character order (from the `DS:0x60` handle table):
+/// `0 KEN, 1 GUILE, 2 E-HONDA, 3 RYU, 4 ZANGIEF, 5 CHUN LI, 6 DHALSIM,
+/// 7 BLANKA, 8 BALROG, 9 VEGA, 10 SAGAT, 11 M.BISON`.
 #[derive(Debug, Clone, Copy)]
 pub struct BlockContext {
-    /// Attacker character index (`char2 / 2`, 0..=11).
+    /// Attacker character index (0..=11).
     pub attacker_char: usize,
     /// Attacker action id (attacker draw object `+0x3D`).
     pub attacker_action: u8,
-    /// Attacker sub-action (`+0x32`, tested by the Bison rule).
-    pub attacker_sub_action: u8,
     /// Attacker `flags_a` (`[si+0x0A]`).
     pub attacker_flags_a: u16,
     /// Defender (opponent) action id (`[bx+0x3D]`).
     pub defender_action: u8,
+    /// Defender (opponent) sub-action (`[bx+0x32]`, tested by the Vega rule).
+    pub defender_sub_action: u8,
 }
 
 /// Per-character anti-hit rule — port of the 12-entry table at `CS:0x22B3`
 /// (entries: 0x22CB allow, 0x22CF reject, 0x22E4/0x22F7/0x2302/0x2312 special).
 pub fn block_rule(ctx: BlockContext) -> BlockVerdict {
-    // Character order: RYUT KENN CHLI GUIL HOND DHAL BLAN ZANG BALR BISO SAGE VEGA
     match ctx.attacker_char {
         4 => {
-            // CHUN LI: opponent attacking with 0x34 and our control bits set.
+            // ZANGIEF: opponent attacking with 0x34 and our control bits set.
             if ctx.defender_action == 0x34 && ctx.attacker_flags_a & 3 != 0 {
                 BlockVerdict::Reject
             } else {
                 BlockVerdict::Allow
             }
         }
-        5 => BlockVerdict::Reject, // DHALSIM: this path never lands
+        5 => BlockVerdict::Reject, // CHUN LI: this path never lands
         7 => {
-            // ZANGIEF: opponent in 0x34 -> roles swap.
+            // BLANKA: opponent in 0x34 -> roles swap.
             if ctx.defender_action == 0x34 {
                 BlockVerdict::SwapRoles
             } else {
@@ -70,15 +73,15 @@ pub fn block_rule(ctx: BlockContext) -> BlockVerdict {
             }
         }
         9 => {
-            // M. BISON: early frames of 0x34 are immune.
-            if ctx.defender_action == 0x34 && ctx.attacker_sub_action < 0x3C {
+            // VEGA: opponent's early 0x34 frames are immune.
+            if ctx.defender_action == 0x34 && ctx.defender_sub_action < 0x3C {
                 BlockVerdict::Reject
             } else {
                 BlockVerdict::Allow
             }
         }
         11 => {
-            // VEGA: only counters while ourselves attacking 0x34..=0x37.
+            // M. BISON: only counters while ourselves attacking 0x34..=0x37.
             if ctx.defender_action != 0x34 {
                 return BlockVerdict::Allow;
             }

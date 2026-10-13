@@ -9,7 +9,7 @@ handle → asset name = `0xFFFF − handle`).
 Evidence classes: **observed** (bytes/instructions read directly), **derived** (arithmetic on
 observed data), **inferred**. Everything called *unknown* below is stated explicitly.
 
-This document **corrects** `fight-engine.md` §3.2/§7 in three places (see §2.3, §7.1, §7.2).
+This document **corrects** `fight-engine.md` §3.2/§3.3/§7 in several places (see §7).
 
 ---
 
@@ -67,7 +67,7 @@ All addresses are **linear**. "→" = the callee.
 | `0x1933B` | **title cursor + input** (see §4) → returns `BX ∈ {0,2,4,6}` and flags in `AL`/ZF/SF | observed |
 | `0x193BB` | draw the cursor sprite `sprSELETCUR` at `(0x60, 0x84+6·item)`; args `DX=item`, `SI=0xF2D9`, `BP=0` | observed |
 | table `0x15029` (`CS:0x5029`) | 4 words: `0x5031, 0x506B, 0x506F, 0x5076` (CS-relative) | observed bytes |
-| `0x15031` | GAME START: `[0x4514]=0`; zero `0x3BAF/0x3BB1/0x3BD2/0x3BD4`; `0x19520` (loading screen); `CALL 0x18953` (select); on abort return; `[0x323D]=0xFF`; `0x19230` (loading+VS screen); `CALL 0x140F9` (match driver); `0x115B8/0x19C04/0x13880/0x14D29`; `[0x3029]=0` | observed |
+| `0x15031` | GAME START: `[0x4514]=0`; zero `0x3BAF/0x3BB1/0x3BD2/0x3BD4`; `0x19520` (level-load routine, 3 retries via `0x1966D`/`0x1973B`); `CALL 0x18953` (select); on abort return; `[0x323D]=0xFF`; `0x19230` (load + VS screen); `CALL 0x140F9` (match driver); `0x115B8/0x19C04/0x13880/0x14D29`; `[0x3029]=0` | observed |
 | `0x1506B` | V.S. BATTLE: `CALL 0x14379` | observed |
 | `0x1506F` | OPTION MODE: `CALL 0x153C4`; `POP AX`; `JMP 0x14FF0` (redraws the title menu, the outer RET goes back to `0x14FB7`) | observed |
 | `0x15076` | QUIT TO DOS: `0x1834B` (save HIGHSCOR), `0x15F50`, then `INT 21h/4C` exit stub | observed |
@@ -121,7 +121,7 @@ All addresses are **linear**. "→" = the callee.
 | `0x1915D` | allocate one cursor draw object: `[si+4]=sprite`, `[si+0x1A]=0x1010`, `[si+0x20]=block ptr`, `[di+1]=cell`, `[di+2]=[di+3]=0xFF` | observed |
 | **`0x19185`** | cursor draw-object payload (per frame): if `[0x451D]==0xFF` and not locked, read `[key+4]`, move the cell with the table `0x4494`, store the char `[DI]=0x44B4[cell]`, and set the object x/y from base + `0x44CC` | observed |
 | `0x1920E/15/1C/23` | the 4 cursor-move handlers (up/down/left/right), see §5.4 | observed |
-| `0x19230` | **loading + V.S. match-up screen**: `0x19520` (loading), assets `0x19`, `palVSLOGO` + `sprVSLOGO` at `(0x40,0x88)`, two portraits (`0x1929E` with `DI=0x43E8`, `BP=0x3030`/`0x4040`), present, release, wait `0x15D83(5)` | observed |
+| `0x19230` | **level load + V.S. match-up screen**: `0x19520` (level load), assets `0x19`, `palVSLOGO` + `sprVSLOGO` at `(0x40,0x88)`, two portraits (`0x1929E` with `DI=0x43E8`, `BP=0x3030`/`0x4040`), present, release, wait `0x15D83(5)` | observed |
 | `0x1929E` | draw one fighter block: palette `[bx+0x4430]` (slot = low byte of `BP`), sprite `[bx+DI]`, `CALL 0x11507` name | observed (arg convention proven by `0x1433F`: `BX=char*2`, `BH=0`) |
 | `0x17F49` | RNG (returns `AX`) | observed call sites |
 
@@ -201,7 +201,7 @@ All addresses are **linear**. "→" = the callee.
 | `0x2A2D`/`0x2A33` | record state: `2` = this player lost the bout | `0x14183`, `0x1418F` |
 | `0x2A2E`,`0x2A34`,`0x2A38`,`0x2A39`,`0x2A3A`,`0x2A3E` | bout/round/counter bytes (fight-engine §3.3) | — |
 | `0x2A3B` | **level/stage id** = opponent char\*2 (or the V.S. stage cursor) | `0x14112`, `0x143DB` |
-| `0x2A3C` | **human-player mask**: bit0 = P1 human, bit1 = P2 human (1 = GAME START, 3 = V.S.) | `0x14116`, `0x143DF` |
+| `0x2A3C` | **human-player mask**: bit0 = P1 human, bit1 = P2 human. It is the mask `0x18953` returns (1 = P1 confirmed, 3 = both; GAME START normally yields 1, V.S. BATTLE 3). Note a title confirmed with P2's keys propagates as 2 (the select screen then accepts P2's confirm) — reproduce as-is | `0x14116`, `0x143DF` |
 | `0x2F0C`/`0x2F15` | per-player key struct: `{+0 device word, +2?, +4 direction/button state, +5 last, +6 flags: bit0 = button released latch, bit1 = held, bit2, bit3 = "state consumed", +7 raw, +8 button accumulator}` | §2.4 |
 | `0x2F08`/`0x2F0A` | per-player device id → handler `[id + 0x2F37]`: 0 = none, 2/4 = analog axes (`0x16A7`/`0x16BD`), **6 = keyboard P1**, **8 = keyboard P2**, 10… = further sources | `0x14BE6`, `0x2F37` |
 | `0x2F1E`/`0x2F2A` | 6 × {u8 scancode, u8 bit} menu keys. Defaults: P1 `48,50,4B,4D,39,1C` (↑↓←→ Space Enter) / P2 `10,1E,2C,2D,02,03` (Q A Z X 1 2) | `0x14F21`, reloaded by `0x14C64` from `0x300F`/`0x301B` |
@@ -335,8 +335,9 @@ here — it is caught in `0x18A6B`:
 ```
 
 In 1P mode `0x18A34` always clears CF, so **the first confirm event ends the loop**
-(`0x14CE2` bit0, then `AND AL,[0x451B]` with `[0x451B] = [0x2A3C]` = 1). In V.S. mode both
-`[0x4526]` and `[0x452A]` must be 0 first (`STC` while either is 0xFF).
+(`0x14CE2` bit0, then `AND AL,[0x451B]` where `[0x451B]` is the mask the caller passed in: the
+title's confirm byte for the first GAME START call, `[0x2A3C]` for the ladder re-select). In V.S.
+mode both `[0x4526]` and `[0x452A]` must be 0 first (`STC` while either is 0xFF).
 
 **Phase B — the CPU player (`0x18A9D`).** With `AL != 3` (1P), the missing participant is
 resolved:
@@ -411,8 +412,8 @@ entry 0x104E6 → 0x14F4F (init) → 0x14FB9 (sequencer)
 BX=0 (GAME START, 0x15031)
    0x4514 = 0                                  ; ladder mode
    0x3BAF/0x3BB1/0x3BD2/0x3BD4 = 0             ; score/HUD scratch
-   0x19520                                     ; "LOADING LEVEL ...."
-   CALL 0x18953  (AL = 1 from the title confirm → [0x451B] = 1)
+   0x19520                                     ; level-load routine (retries x3)
+   CALL 0x18953  (AL = the title confirm mask → [0x451B], normally 1)
         → character select (§5); human picks one of the 8 base fighters
         → 0x18A9D picks the CPU's fighter (random, free cells < [0x451A])
         → returns CH = P1 char*2, CL = P2 char*2, DH/DL = both, AL = 1
