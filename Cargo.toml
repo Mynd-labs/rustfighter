@@ -22,3 +22,8 @@ path = "src/bin/rfdump.rs"
 name = "rfplay"
 path = "src/bin/rfplay.rs"
 required-features = ["window"]
+
+[[bin]]
+name = "rfight"
+path = "src/bin/rfight.rs"
+required-features = ["window"]

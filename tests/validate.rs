@@ -290,6 +290,7 @@ fn brain_runs_on_real_tables() {
     // KEN (index 0) vs RYU (index 3): 600 frames of idle input + AI off.
     let mut st = FightState::new(0, 3, 0);
     st.rng = Rng::seeded(0x1234, 0x5678);
+    st.prime(&assets);
     for _ in 0..600 {
         st.run_frame(&assets, [0, 0], [false, false]);
     }

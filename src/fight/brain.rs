@@ -88,6 +88,8 @@ pub struct FightState {
     pub ground_y: i16,
     /// Stage right edge (`[0x25CA]`).
     pub stage_right: i16,
+    /// Maximum camera pan (`stage_width - 320`).
+    pub stage_max_pan: i32,
     /// Pseudo-random generator.
     pub rng: Rng,
     /// 32-bit scores per player.
@@ -105,10 +107,8 @@ impl FightState {
         let mut p2 = Fighter::spawn(0xD0, false);
         p1.flags_a &= !flag_a::CPU;
         p2.flags_a |= flag_a::CPU;
-        let mut o1 = DrawObject::spawn(0, (char1 * 2) as u8, 0x50, 200);
-        let mut o2 = DrawObject::spawn(1, (char2 * 2) as u8, 0xD0, 200);
-        o1.reset_to_idle(false);
-        o2.reset_to_idle(true);
+        let o1 = DrawObject::spawn(0, (char1 * 2) as u8, 0x50, 200);
+        let o2 = DrawObject::spawn(1, (char2 * 2) as u8, 0xD0, 200);
         FightState {
             players: [p1, p2],
             objects: [o1, o2],
@@ -119,10 +119,23 @@ impl FightState {
             camera_dirty: false,
             ground_y: 0,
             stage_right: 0x110,
+            stage_max_pan: 0,
             rng: Rng::default(),
             score: [0, 0],
             ko_flag: false,
             round: Round::new(),
+        }
+    }
+
+    /// Establish the initial stand script for both fighters — the engine's
+    /// constructor commits the idle action, which is what sets the low
+    /// `flags_a` bits (`0x10D74`) that later input decoding reads.
+    pub fn prime(&mut self, assets: &FightAssets) {
+        for i in 0..2 {
+            let opp = 1 - i;
+            self.commit_named_action(assets, i, opp, 0x47);
+            // Run one commit chain so the script/header flags are applied.
+            self.script_commit(assets, i, opp);
         }
     }
 
@@ -135,6 +148,7 @@ impl FightState {
         }
         self.run_driver(assets, 0, inputs, ai);
         self.run_driver(assets, 1, inputs, ai);
+        self.hit_pass(assets);
     }
 
     fn run_driver(&mut self, assets: &FightAssets, i: usize, inputs: [u8; 2], ai: [bool; 2]) {
@@ -402,7 +416,14 @@ impl FightState {
             // Attack path: motion recogniser pending; fall through to the
             // per-input table for state 0..=2.
         }
-        tables::input_action(class, state as u8).unwrap_or_else(|| self.stand_action(i))
+        let action = tables::input_action(class, state as u8).unwrap_or_else(|| self.stand_action(i));
+        // Guard pending the input-recogniser decode (docs/port/
+        // input-recogniser.md): with no direction held the per-state table
+        // must not produce a jump; keep standing instead of running away.
+        if matches!(action, 0x42..=0x44) && input & 0x0F == 0 {
+            return self.stand_action(i);
+        }
+        action
     }
 
     /// `0x10524` — the AI decision.
@@ -632,7 +653,7 @@ impl FightState {
         }
         obj.b3b = script;
         obj.flags38 = (obj.flags38 | 0x04) & !0x08 & !0x10;
-        obj.hotspot = script as u16 * 4; // frm header offset
+        obj.hotspot = script as u16; // already script_id * 4 (header offset)
         obj.sub_action = 0;
         let script_id = (script / 4) as usize;
         let char = (obj.char2 / 2) as usize;
@@ -713,10 +734,19 @@ impl FightState {
         self.objects[i].pos_acc = self.objects[i].pos_acc.wrapping_add(FRAME_ACC_STEP);
         let obj = &mut self.objects[i];
         if obj.mode != 0 && obj.speed_scale != 0 {
-            let scaled = ((obj.pos_acc as u32 as u64) * 8) / (2 * obj.speed_scale as u64);
-            let base = (4i64 - scaled as i64).clamp(0, 7);
-            let slot = if obj.mode == 4 { 7 - base } else { base };
-            obj.sub_action = (slot * 4) as u8;
+            // 0x10DA3: t = (scale + acc_high * 64) / (2 * scale), signed.
+            let acc_high = ((obj.pos_acc as u32) >> 16) as i32;
+            let scale = obj.speed_scale as i32;
+            let t = (scale + (acc_high << 6)) / (2 * scale);
+            let mut v = 4 - t;
+            // cmp ax,7 / jbe keep else 7  (negative wraps to >7 unsigned).
+            if !(0..=7).contains(&v) {
+                v = 7;
+            }
+            if obj.mode == 4 {
+                v = 7 - v;
+            }
+            obj.sub_action = ((v << 2) as u8) & 0xFC;
         }
         // 0x10DEA: step bounds with (x_speed, y delta 0).
         let (finished, cx, dy) = self.step_bounds(i, self.objects[i].x_speed, 0);
@@ -799,45 +829,54 @@ impl FightState {
         (false, cx, dy)
     }
 
-    /// `0x11172` — wall clamp + camera follow. Condensed to the core:
-    /// side walls at 0x30 and 0x110, stage right edge `stage_right`,
-    /// camera push and update.
+    /// `0x11172` — wall clamp + camera follow, condensed: side walls at
+    /// 0x30/0x110 in screen space, camera bounded by the stage, opponent-wall
+    /// pinning, and the wall flags updated the way `0x17620` does.
     fn wall_clamp(&mut self, i: usize, opp: usize, cx: i16, dy: i16) -> (i16, i16) {
-        let mut cx = cx;
-        let px = self.players[i].x;
-        let camera = if self.camera_dirty {
-            self.camera_pending
-        } else {
-            self.camera_x
-        };
-        let nx = px.wrapping_add(cx).wrapping_sub(camera) as i32;
+        let px = self.players[i].x as i32;
+        let mut cam = self.camera_x as i32;
+        let mut cx32 = cx as i32;
+
+        let mut nx = px + cx32 - cam;
         if nx < 0x30 {
-            // Left wall: push the camera (or clamp).
             if self.players[opp].flags_a & flag_a::LEFT_WALL != 0 {
-                cx = 0x30 - (px - camera) as i32 as i16;
+                cx32 = 0x30 - (px - cam);
+                self.players[i].flags_a |= flag_a::LEFT_WALL;
             } else {
-                let push = 0x30 - nx as i16;
-                self.camera_pending = camera.wrapping_sub(push);
-                self.camera_dirty = true;
-                cx = cx.wrapping_sub(push);
+                let want = (cam + (0x30 - nx)).clamp(0, self.stage_max_pan);
+                cam = want;
+                nx = px + cx32 - cam;
+                if nx < 0x30 {
+                    cx32 = 0x30 - (px - cam);
+                    self.players[i].flags_a |= flag_a::LEFT_WALL;
+                } else {
+                    self.players[i].flags_a &= !flag_a::LEFT_WALL;
+                }
             }
         } else if nx > 0x110 {
-            if self.players[opp].flags_a & flag_a::RIGHT_WALL == 0 {
-                let push = nx as i16 - 0x110;
-                self.camera_pending = camera.wrapping_add(push);
-                self.camera_dirty = true;
-                cx = cx.wrapping_sub(push);
+            if self.players[opp].flags_a & flag_a::RIGHT_WALL != 0 {
+                cx32 = 0x110 - (px - cam);
+                self.players[i].flags_a |= flag_a::RIGHT_WALL;
             } else {
-                cx = 0x110 - (px - camera) as i32 as i16;
+                let want = (cam + (nx - 0x110)).clamp(0, self.stage_max_pan);
+                cam = want;
+                nx = px + cx32 - cam;
+                if nx > 0x110 {
+                    cx32 = 0x110 - (px - cam);
+                    self.players[i].flags_a |= flag_a::RIGHT_WALL;
+                } else {
+                    self.players[i].flags_a &= !flag_a::RIGHT_WALL;
+                }
             }
+        } else {
+            self.players[i].flags_a &= !(flag_a::LEFT_WALL | flag_a::RIGHT_WALL);
         }
-        // Push the opponent when overlapping (body push handled elsewhere).
-        let _ = opp;
-        if self.camera_pending != self.camera_x {
-            self.camera_x = self.camera_pending;
-        }
-        (cx, dy)
+        self.camera_x = cam as i16;
+        self.camera_pending = cam as i16;
+        self.camera_dirty = true;
+        (cx32.clamp(i16::MIN as i32, i16::MAX as i32) as i16, dy)
     }
+
 
     /// `0x10AB1` — advance one frame in the script's list; returns
     /// `(advanced, (dx, dy))`.
@@ -916,6 +955,83 @@ impl FightState {
         (ani, header_flags)
     }
 
+    /// Start an action directly (used by the debug keys while the input
+    /// recogniser is not ported).
+    pub fn force_action(&mut self, assets: &FightAssets, i: usize, action: u8) {
+        let opp = 1 - i;
+        self.start_action(assets, i, opp, action);
+    }
+
+
+    /// `0x12131` — hitbox build + resolution (runs after the entity pass).
+    pub fn hit_pass(&mut self, assets: &FightAssets) {
+        let boxes = [self.build_boxes(assets, 0), self.build_boxes(assets, 1)];
+        for atk in 0..2 {
+            let def = 1 - atk;
+            if self.players[atk].flags_a & hit::ATTACK_ARMED == 0 {
+                continue;
+            }
+            if self.objects[atk].flags & 0x0800 != 0 {
+                continue;
+            }
+            if self.players[def].flags_b & 0x0004 != 0 {
+                continue;
+            }
+            if self.players[atk].flags_a & hit::WAS_HIT != 0 {
+                continue;
+            }
+            for (idx, require_kind15) in [(1usize, false), (3usize, true)] {
+                let Some(ab) = boxes[atk][idx] else { continue };
+                if require_kind15 && ab.kind != 15 {
+                    continue;
+                }
+                if !hit::overlap(&ab, &boxes[def], 5) {
+                    continue;
+                }
+                let ctx = hit::BlockContext {
+                    attacker_char: (self.objects[atk].char2 / 2) as usize,
+                    attacker_action: self.objects[atk].action,
+                    attacker_flags_a: self.players[atk].flags_a,
+                    defender_action: self.objects[def].action,
+                    defender_sub_action: self.objects[def].sub_action,
+                };
+                match hit::block_rule(ctx) {
+                    hit::BlockVerdict::Reject => continue,
+                    hit::BlockVerdict::Allow => {
+                        let (a_p, d_p) = index_pair(&mut self.players, atk, def);
+                        let (a_o, d_o) = index_pair(&mut self.objects, atk, def);
+                        let mut att = hit::FighterPair { player: a_p, obj: a_o };
+                        let mut deff = hit::FighterPair { player: d_p, obj: d_o };
+                        let _ = hit::apply_hit(&mut att, &mut deff, false);
+                    }
+                    hit::BlockVerdict::SwapRoles => {
+                        let (a_p, d_p) = index_pair(&mut self.players, atk, def);
+                        let (a_o, d_o) = index_pair(&mut self.objects, atk, def);
+                        let mut att = hit::FighterPair { player: a_p, obj: a_o };
+                        let mut deff = hit::FighterPair { player: d_p, obj: d_o };
+                        let _ = hit::apply_hit(&mut deff, &mut att, true);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    fn build_boxes(
+        &self,
+        assets: &FightAssets,
+        i: usize,
+    ) -> [Option<crate::fight::ani::HitBox>; 4] {
+        let char = (self.objects[i].char2 / 2) as usize;
+        let frame_index = self.objects[i].frame as usize;
+        let Some(frame) = assets.ani[char].frame(frame_index) else {
+            return [None; 4];
+        };
+        // The mirror selector is the draw object's bit 2 (`facing & 4`).
+        let flipped = self.objects[i].facing & 4 != 0;
+        crate::fight::ani::build_hitboxes(frame, self.players[i].x, self.players[i].y, flipped)
+    }
+
     /// `0x11317` — facing update based on X positions.
     fn update_facing(&mut self, i: usize, opp: usize) {
         let mine = self.players[i].x;
@@ -929,5 +1045,16 @@ impl FightState {
         } else if mine < theirs {
             obj.facing |= 0x04;
         }
+    }
+}
+
+/// Borrow two different indices of a 2-element array mutably.
+fn index_pair<T>(arr: &mut [T; 2], a: usize, b: usize) -> (&mut T, &mut T) {
+    if a < b {
+        let (left, right) = arr.split_at_mut(b);
+        (&mut left[a], &mut right[0])
+    } else {
+        let (left, right) = arr.split_at_mut(a);
+        (&mut right[0], &mut left[b])
     }
 }

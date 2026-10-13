@@ -267,6 +267,11 @@ impl DrawObject {
         self.sub_action = 0x1C;
         self.mode = 0xFC;
         self.pos_acc = IDLE_POS_ACC;
+        // Move-start (0x110CA) sets the accumulator divisor to 8*speed; the
+        // same value keeps the idle accumulator path from dividing by zero.
+        if self.speed_scale == 0 {
+            self.speed_scale = 8 * 0x0C;
+        }
     }
 
     /// Port of the move start `FUN_1000_110CA` (`0x110CA`).
