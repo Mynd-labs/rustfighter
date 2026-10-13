@@ -16,6 +16,7 @@ pub mod ani;
 pub mod fighter;
 pub mod frm;
 pub mod hit;
+pub mod render;
 pub mod round;
 
 /// Action→sound table `DS:0x1638` (64 bytes): SFX id played for the attacker's

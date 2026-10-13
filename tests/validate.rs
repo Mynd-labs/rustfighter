@@ -212,6 +212,35 @@ fn character_tables_parse_and_chain_resolves() {
 }
 
 #[test]
+fn fighter_rendering_uses_real_ani_sprites() {
+    use rustfighter::canvas::Canvas;
+    use rustfighter::fight::ani::AniTable;
+    use rustfighter::fight::render::{draw_ani_frame, install_character_palettes};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let ani = AniTable::parse("aniKEN", &gd.decoded("aniKEN").unwrap()).unwrap();
+    let pal = gd.palette16("palKENNT001").expect("palKENNT001");
+    let mut canvas = Canvas::new(320, 200);
+    install_character_palettes(&mut canvas, &pal, &pal);
+    let mut drawn_total = 0usize;
+    for idx in [0usize, 111, 112, 113, 125, 199] {
+        let frame = ani.frame(idx).unwrap();
+        let mut lookup = |h: u16| -> Option<rustfighter::sprite::Frame> {
+            gd.record_for_handle(h)
+                .and_then(|r| gd.sprite(r.trimmed_name()).ok())
+        };
+        let stats = draw_ani_frame(&mut canvas, frame, 100, 150, false, 0x30, &mut lookup);
+        drawn_total += stats.t_pixels + stats.b_pixels;
+    }
+    assert!(
+        drawn_total > 100,
+        "expected meaningful sprite pixels across KEN frames, got {drawn_total}"
+    );
+}
+
+#[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");
