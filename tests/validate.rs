@@ -367,6 +367,38 @@ fn fireball_spawns_and_hits_with_real_tables() {
 }
 
 #[test]
+fn real_input_fires_hadouken_through_the_recogniser() {
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    let mut st = FightState::new(0, 3, 0); // KEN (P1) vs RYU
+    st.prime(&assets);
+    for _ in 0..30 {
+        st.run_frame(&assets, [0, 0], [false, false]);
+    }
+    // QCF + punch: down, down-right, right, then hold punch (0x10|0x20).
+    let script: [(u8, usize); 5] = [(0x00, 10), (0x02, 3), (0x0A, 3), (0x08, 3), (0x30, 30)];
+    let mut fired = false;
+    'outer: for (byte, dur) in script {
+        for _ in 0..dur {
+            st.run_frame(&assets, [byte, 0], [false, false]);
+            if !st.projectiles.is_empty() {
+                fired = true;
+                break 'outer;
+            }
+        }
+    }
+    assert!(
+        fired,
+        "QCF+P input must be recognised as action 0x35 and spawn a fireball"
+    );
+    assert_eq!(st.objects[0].action, 0x35);
+}
+
+#[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");

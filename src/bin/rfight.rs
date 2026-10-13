@@ -223,11 +223,13 @@ fn main() {
         if game_state.keys.is_held(0, Button::Right) {
             raw |= 0x08;
         }
-        if game_state.keys.just_pressed(0, Button::Punch) {
-            raw |= 0x10;
+        // Bit table (docs/port/input-recogniser.md §2.1): 0x10 = attack held,
+        // 0x20 = punch, 0x40 = kick.
+        if game_state.keys.is_held(0, Button::Punch) {
+            raw |= 0x10 | 0x20;
         }
-        if game_state.keys.just_pressed(0, Button::Kick) {
-            raw |= 0x20;
+        if game_state.keys.is_held(0, Button::Kick) {
+            raw |= 0x10 | 0x40;
         }
         // Global quit: ESC held in Title or with Shift in Fight.
         if game_state.phase == Phase::Title

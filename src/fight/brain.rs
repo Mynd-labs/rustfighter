@@ -137,6 +137,8 @@ pub struct FightState {
     /// Debug action override: `(player, action)` replaces the chooser's
     /// request for that player (used by tests and the fight build's keys).
     pub debug_action: Option<(usize, u8)>,
+    /// Per-player input history rings for the motion recogniser (`0x2F4B`).
+    pub hist: [crate::fight::motion::Hist; 2],
 }
 
 impl FightState {
@@ -167,6 +169,7 @@ impl FightState {
             sound_events: Vec::new(),
             latches: (false, false),
             debug_action: None,
+            hist: [Default::default(), Default::default()],
         }
     }
 
@@ -188,6 +191,9 @@ impl FightState {
         // The "updated this frame" bit is cleared for both players first.
         for p in &mut self.players {
             p.flags_b &= !0x40;
+        }
+        for (i, input) in inputs.iter().enumerate() {
+            self.hist[i].update(*input);
         }
         self.run_driver(assets, 0, inputs, ai);
         self.run_driver(assets, 1, inputs, ai);
@@ -422,7 +428,7 @@ impl FightState {
         } else {
             // Human path (0x1794C..): raw input byte in player[0x17].
             self.players[i].b17 = input;
-            self.decode_input(i, opp, input)
+            self.decode_input(assets, i, opp, input)
         }
     }
 
@@ -434,23 +440,75 @@ impl FightState {
         }
     }
 
-    /// `0x1075A` — human input decoder (motion recogniser `0x14E1B` pending).
-    fn decode_input(&self, i: usize, opp: usize, input: u8) -> u8 {
-        let class = tables::input_class(input);
+    /// `0x1075A` — human input decoder, full flow (see
+    /// `docs/port/input-recogniser.md` §5): attack/special path with the
+    /// motion recogniser, normal-attack lookup from the `ait` sections, the
+    /// throw-counter path and the per-input action table.
+    fn decode_input(&mut self, assets: &FightAssets, i: usize, opp: usize, input: u8) -> u8 {
+        let char = (self.objects[i].char2 / 2) as usize;
+        let mut class = tables::input_class(input);
         if class == 0x08 {
             return self.stand_action(i);
         }
-        let class = if class == 0xFF { 0 } else { class };
-        if input & 0x80 != 0 {
-            // "special moves disabled" variant path
+        if class == 0xFF {
+            class = 0;
+        }
+        let al = input & 0x7F;
+        if al == 0 {
+            return 0x47;
+        }
+        let facing_right = self.objects[i].facing & 4 != 0;
+        if al & 0x10 != 0 {
+            // Attack/special path (0x107D9).
+            let mut class2 = class;
+            if !facing_right {
+                let remapped =
+                    (input & 0xF0) | tables::INPUT_REMAP[(input & 0x0F) as usize];
+                class2 = tables::input_class(remapped);
+                if class2 == 0xFF {
+                    class2 = 0;
+                }
+            }
+            // The original poller is an ISR ticking several times per game
+            // frame; refresh the open run so a freshly pressed attack is
+            // visible to the recogniser in the same frame (the ring's
+            // stale-byte write would otherwise delay it one frame).
+            if self.hist[i].newest_byte() != input {
+                self.hist[i].update(input);
+            }
+            if let Some(cl) = crate::fight::motion::recognise(&mut self.hist[i], char, facing_right)
+            {
+                let mut action = 0x34 + cl;
+                // 0x1082E: char2 == 8 (ZANGIEF) remaps 0x35 -> 0x33.
+                if self.objects[i].char2 == 8 && action == 0x35 {
+                    action = 0x33;
+                }
+                return action;
+            }
+            // Normal-attack lookup (0x1083E).
+            let state = (self.players[i].flags_a & 3) as usize;
+            let (section, index) = if input & 0x0F == 0 {
+                // Button only: sub-table hdr[7], index = state*2 (keyboard).
+                (7usize, state * 2)
+            } else {
+                // With direction: hdr[8] (keyboard), index =
+                // class*8 + distance bucket + state*64.
+                let dx = (self.players[i].x as i32 - self.players[opp].x as i32)
+                    .unsigned_abs() as u16;
+                let bucket = crate::fight::round::distance_bucket(dx) as usize;
+                (8usize, class2 as usize * 8 + bucket + state * 64)
+            };
+            if let Some(table) = assets.ait[char].section(section) {
+                if let Some(&action) = table.get(index) {
+                    return action;
+                }
+            }
             return self.stand_action(i);
         }
-        // Opponent attacking and I am not in state 2 -> counter actions.
+        // Counter path: opponent attacking, I press back (0x1078A).
         if self.players[opp].flags_a & 0x0020 != 0 && self.players[i].flags_a & 3 != 2 {
-            let facing = self.objects[i].facing & 4 != 0;
-            let dir = input & 0x0F;
-            let toward = if facing { dir & 8 != 0 } else { dir & 4 != 0 };
-            if toward {
+            let back = if facing_right { al & 0x04 != 0 } else { al & 0x08 != 0 };
+            if back {
                 return if self.players[i].flags_a & 3 == 1 {
                     0x3E
                 } else {
@@ -458,15 +516,11 @@ impl FightState {
                 };
             }
         }
-        let state = (self.players[i].flags_a & 3) as usize;
-        if input & 0x10 != 0 {
-            // Attack path: motion recogniser pending; fall through to the
-            // per-input table for state 0..=2.
-        }
-        let action = tables::input_action(class, state as u8).unwrap_or_else(|| self.stand_action(i));
-        // Guard pending the input-recogniser decode (docs/port/
-        // input-recogniser.md): with no direction held the per-state table
-        // must not produce a jump; keep standing instead of running away.
+        let state = (self.players[i].flags_a & 3) as u8;
+        let action =
+            tables::input_action(class, state).unwrap_or_else(|| self.stand_action(i));
+        // Guard: with no direction held the per-state table must not jump
+        // (pending table-verification; see the analysis notes).
         if matches!(action, 0x42..=0x44) && input & 0x0F == 0 {
             return self.stand_action(i);
         }

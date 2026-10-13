@@ -18,6 +18,7 @@ pub mod ani;
 pub mod fighter;
 pub mod frm;
 pub mod hit;
+pub mod motion;
 pub mod render;
 pub mod rng;
 pub mod round;
