@@ -217,10 +217,11 @@ pub fn apply_reaction_damage(
         }
     }
 
-    // 0x185DE: reaction special cases (char2 4/0xC/0xE = CHUN LI / BLANKA /
-    // ZANGIEF).
+    // 0x185DE: reaction special cases (char2 4/0xC/0xE = ZANGIEF / DHALSIM /
+    // BLANKA). `[0x43BB]` marks the combo-reaction set; extra is halved when
+    // the reaction id is 0x2C.
     let combo_reaction = matches!(char2, 4 | 0xC | 0xE);
-    if combo_reaction && reaction_id != 0x2C {
+    if combo_reaction && reaction_id == 0x2C {
         extra >>= 1;
     }
 
@@ -238,7 +239,7 @@ pub fn apply_reaction_damage(
     // 0x1861C: unconditional halving.
     damage >>= 1;
 
-    // 0x18620: hit-counter accumulation (skipped when flags_b bit 4 is set).
+    // 0x18620: dizzy-timer accumulation (+0x19) skipped when flags_b bit 4.
     let mut counter_damage = damage;
     if player.flags_b & 0x0010 == 0 {
         if combo_reaction {
@@ -308,36 +309,36 @@ mod tests {
         let base = BlockContext {
             attacker_char: 0,
             attacker_action: 0x34,
-            attacker_sub_action: 0,
             attacker_flags_a: 0,
             defender_action: 0x34,
+            defender_sub_action: 0,
         };
         // Ryu-like: always allow.
         assert_eq!(block_rule(base), BlockVerdict::Allow);
-        // Chun Li (4): reject with control bits set.
+        // Zangief (4): reject with control bits set.
         let mut ctx = base;
         ctx.attacker_char = 4;
         assert_eq!(block_rule(ctx), BlockVerdict::Allow);
         ctx.attacker_flags_a = 1;
         assert_eq!(block_rule(ctx), BlockVerdict::Reject);
-        // Dhalsim (5): always reject.
+        // Chun Li (5): always reject in this shipped build.
         let mut ctx = base;
         ctx.attacker_char = 5;
         assert_eq!(block_rule(ctx), BlockVerdict::Reject);
-        // Zangief (7): swap on 0x34.
+        // Blanka (7): swap on 0x34.
         let mut ctx = base;
         ctx.attacker_char = 7;
         assert_eq!(block_rule(ctx), BlockVerdict::SwapRoles);
         ctx.defender_action = 0x35;
         assert_eq!(block_rule(ctx), BlockVerdict::Allow);
-        // Bison (9): reject while sub-action < 0x3C.
+        // Vega (9): reject while the DEFENDER's sub-action < 0x3C.
         let mut ctx = base;
         ctx.attacker_char = 9;
-        ctx.attacker_sub_action = 0x3B;
+        ctx.defender_sub_action = 0x3B;
         assert_eq!(block_rule(ctx), BlockVerdict::Reject);
-        ctx.attacker_sub_action = 0x3C;
+        ctx.defender_sub_action = 0x3C;
         assert_eq!(block_rule(ctx), BlockVerdict::Allow);
-        // Vega (11): reject unless we are attacking 0x34..=0x37.
+        // M. Bison (11): reject unless we are attacking 0x34..=0x37.
         let mut ctx = base;
         ctx.attacker_char = 11;
         ctx.attacker_action = 0x30;
@@ -362,9 +363,13 @@ mod tests {
     fn damage_pipeline_with_difficulty_and_combo_character() {
         let mut player = Fighter::spawn(0, false);
         let table = [20u8; 64];
-        // Chun Li (char2 = 4): extra = 3*4 = 12, halved to 6 (reaction != 0x2C);
-        // damage = 20*2 + 6 = 46; >>1 = 23.
+        // Zangief (char2 = 4): extra = 3*4 = 12 (no halving for reaction 4);
+        // damage = 20*2 + 12 = 52; >>1 = 26.
         let out = apply_reaction_damage(&mut player, 4, 4, &table, Some(4), false);
+        assert_eq!(out.damage, 26);
+        // The same defender with reaction 0x2C halves the extra: 20*2+6 = 46 -> 23.
+        let mut player = Fighter::spawn(0, false);
+        let out = apply_reaction_damage(&mut player, 4, 0x2C, &table, Some(4), false);
         assert_eq!(out.damage, 23);
         assert!(out.combo_reaction);
         // Dizzy + attack range caps at 6 -> >>1 => 3.

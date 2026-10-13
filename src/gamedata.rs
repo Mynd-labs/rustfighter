@@ -16,7 +16,8 @@ use crate::lzw;
 use crate::palette::{self, Palette};
 use crate::sprite::{self, Frame};
 
-/// Character codes and display names (12 selectable fighters).
+/// Character codes and display names (12 selectable fighters), in *display*
+/// order for the viewer tools.
 pub const CHARACTERS: &[(&str, &str)] = &[
     ("RYUT", "RYU"),
     ("KENN", "KEN"),
@@ -31,6 +32,21 @@ pub const CHARACTERS: &[(&str, &str)] = &[
     ("SAGE", "SAGAT"),
     ("VEGA", "VEGA"),
 ];
+
+/// **Engine character order** (`DS:0x60` handle table, index = `char`):
+/// `0 KEN, 1 GUILE, 2 E-HONDA, 3 RYU, 4 ZANGIEF, 5 CHUN LI, 6 DHALSIM,
+/// 7 BLANKA, 8 BALROG, 9 VEGA, 10 SAGAT, 11 M.BISON`.
+///
+/// All engine tables (`ait`/`ani`/`frm` handles, block rules `CS:0x22B3`,
+/// damage special cases, CPU probability `DS:0x3432`) index by this order.
+pub const ENGINE_CHARACTERS: [&str; 12] = [
+    "KENN", "GUIL", "HOND", "RYUT", "ZANG", "CHLI", "DHAL", "BLAN", "BALR", "VEGA", "SAGE", "BISO",
+];
+
+/// Engine index for a record-name character code.
+pub fn engine_char_index(code: &str) -> Option<usize> {
+    ENGINE_CHARACTERS.iter().position(|&c| c == code)
+}
 
 /// A screen-sized image record with an optional companion palette name.
 #[derive(Debug, Clone)]

@@ -58,6 +58,34 @@ impl AitTable {
         Some(&self.data[start..next])
     }
 
+    /// Per-action **damage/power** byte table — header word 5
+    /// (`0x1857C` looks it up with `AX = 0x0A`; the helper dereferences the
+    /// header word at that byte offset and indexes it by the reaction id).
+    pub fn power_table(&self) -> Option<&[u8]> {
+        self.section(5)
+    }
+
+    /// Per-reaction **score** byte table — header word 4 (`0x1836B` with `AX = 8`).
+    pub fn score_table(&self) -> Option<&[u8]> {
+        self.section(4)
+    }
+
+    /// Per-action **lockout** byte table — header word 6 (`0x17C9E` stores it
+    /// into `player[0x20]`).
+    pub fn lockout_table(&self) -> Option<&[u8]> {
+        self.section(6)
+    }
+
+    /// Per-action AI **approach flag** table — header word 0 (`0x106E8`).
+    pub fn approach_table(&self) -> Option<&[u8]> {
+        self.section(0)
+    }
+
+    /// Sparse **action → script** map — header word 1 (`0x17BE1`).
+    pub fn action_map(&self) -> Option<&[u8]> {
+        self.section(1)
+    }
+
     /// Port of `FUN_1000_17BE1` (`0x17BE1`): map an action id to its script.
     ///
     /// Scans the `hdr[1]` section downward from `action` while the `u16` at

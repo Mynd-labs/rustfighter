@@ -241,6 +241,40 @@ fn fighter_rendering_uses_real_ani_sprites() {
 }
 
 #[test]
+fn ait_sections_and_damage_values_pin_the_real_data() {
+    use rustfighter::fight::ait::AitTable;
+    use rustfighter::gamedata::{engine_char_index, GameData, ENGINE_CHARACTERS};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    // Engine character order is the DS:0x60 handle-table order.
+    assert_eq!(engine_char_index("KENN"), Some(0));
+    assert_eq!(engine_char_index("BISO"), Some(11));
+    assert_eq!(engine_char_index("ZANG"), Some(4));
+    for rec in gd.index.find_prefix("ait") {
+        let name = rec.trimmed_name().to_string();
+        let table = AitTable::parse(&name, &gd.decoded(&name).unwrap()).expect("ait parses");
+        assert!(table.power_table().is_some(), "{name} power table");
+        assert!(table.score_table().is_some(), "{name} score table");
+        assert!(table.lockout_table().is_some(), "{name} lockout table");
+    }
+    // KEN's power table (hdr[5]) values at attack ids 0x34..0x37 are the
+    // byte-verified data from the analysis.
+    let ait = AitTable::parse("aitKEN", &gd.decoded("aitKEN").unwrap()).unwrap();
+    let power = ait.power_table().unwrap();
+    assert_eq!(
+        [power[0x34], power[0x35], power[0x36], power[0x37]],
+        [13, 8, 19, 0]
+    );
+    let score = ait.score_table().unwrap();
+    assert_eq!(
+        [score[0x34], score[0x35], score[0x36]],
+        [150, 150, 150]
+    );
+}
+
+#[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");
