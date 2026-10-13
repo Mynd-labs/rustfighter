@@ -18,6 +18,7 @@ pub mod embedded;
 pub mod font;
 pub mod gamedata;
 pub mod index;
+pub mod input;
 pub mod lzw;
 pub mod palette;
 pub mod sprite;
