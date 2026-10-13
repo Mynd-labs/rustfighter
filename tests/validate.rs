@@ -111,6 +111,68 @@ fn sound_assets_decode() {
 }
 
 #[test]
+fn ani_tables_parse_and_handles_resolve() {
+    use rustfighter::fight::ani::{build_hitboxes, AniTable};
+    use rustfighter::gamedata::GameData;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let mut parsed = 0;
+    for rec in gd.index.find_prefix("ani") {
+        let name = rec.trimmed_name().to_string();
+        let bytes = gd.decoded(&name).expect("ani decodes");
+        let table = AniTable::parse(&name, &bytes).expect("ani parses");
+        assert_eq!(table.frames.len(), 200, "{name} frame count");
+        // Every sprite handle in every frame must resolve to a real record.
+        for (fi, frame) in table.frames.iter().enumerate() {
+            for &(handle, _off) in &frame.sprites {
+                if handle == 0xFFF8 || handle == 0xF33A {
+                    continue;
+                }
+                // Handles are only valid while loaded; 0 means absent in some frames.
+                if handle == 0 {
+                    continue;
+                }
+                assert!(
+                    gd.record_for_handle(handle).is_some(),
+                    "{name} frame {fi}: handle {handle:#06x} does not resolve"
+                );
+            }
+        }
+        parsed += 1;
+    }
+    assert_eq!(parsed, 12, "12 character ani tables");
+
+    // Spot check: KEN frame 0 sprites are KENN sprite records.
+    let ken = AniTable::parse("aniKEN", &gd.decoded("aniKEN").unwrap()).unwrap();
+    let f0 = ken.frame(0).unwrap();
+    let names: Vec<String> = f0
+        .sprites
+        .iter()
+        .filter(|(h, _)| *h != 0xFFF8 && *h != 0xF33A && *h != 0)
+        .filter_map(|(h, _)| gd.record_for_handle(*h))
+        .map(|r| r.trimmed_name().to_string())
+        .collect();
+    assert!(
+        names.iter().any(|n| n.starts_with("sprKENN")),
+        "frame 0 sprites should include a KENN bank: {names:?}"
+    );
+
+    // Hitbox construction runs for all frames.
+    for fi in 0..200 {
+        let frame = ken.frame(fi).unwrap();
+        let boxes = build_hitboxes(frame, 100, 200, false);
+        for (i, b) in boxes.iter().enumerate() {
+            if let Some(b) = b {
+                assert!(b.right > b.left, "frame {fi} box {i} geometry");
+                assert!(b.bottom > b.top, "frame {fi} box {i} geometry");
+            }
+        }
+    }
+}
+
+#[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");

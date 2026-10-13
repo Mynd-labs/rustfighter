@@ -15,6 +15,7 @@ pub mod binfont;
 pub mod canvas;
 #[cfg(feature = "embedded")]
 pub mod embedded;
+pub mod fight;
 pub mod font;
 pub mod gamedata;
 pub mod index;

@@ -284,6 +284,12 @@ impl GameData {
         self.index.find(name)
     }
 
+    /// Resolve an engine asset handle (`SI = -(index+1) mod 0x10000`).
+    pub fn record_for_handle(&self, handle: u16) -> Option<&Record> {
+        let index = (0x10000u32 - handle as u32 - 1) & 0xFFFF;
+        self.index.records.get(index as usize)
+    }
+
     /// Decode (raw or LZW) a record's payload, with caching.
     pub fn decoded_record(&self, rec: &Record) -> Result<Rc<Vec<u8>>, String> {
         if let Some(hit) = self.decoded.borrow().get(&rec.index) {
