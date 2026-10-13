@@ -24,6 +24,8 @@ use rustfighter::fight::render::{draw_ani_frame, install_character_palettes, PAL
 use rustfighter::fight::round::RoundOutcome;
 use rustfighter::fight::select::{Dir, Select};
 use rustfighter::fight::rng::Rng;
+use rustfighter::audio::AudioOut;
+use rustfighter::sound::SoundBank;
 use rustfighter::gamedata::{find_game_dir, GameData, ENGINE_TABLE_STEMS};
 use rustfighter::input::{Button, InputConfig, InputState};
 use rustfighter::palette::Palette;
@@ -82,11 +84,15 @@ fn main() {
     });
     let p1_index = ENGINE_TABLE_STEMS.iter().position(|&s| s == p1).unwrap_or(0);
     let p2_index = ENGINE_TABLE_STEMS.iter().position(|&s| s == p2).unwrap_or(3);
+    let audio = AudioOut::new();
+    let sound_bank = SoundBank::load(&gd).ok();
     let stage_keys = gd.stage_keys();
     let stage_key = stage_key.unwrap_or_else(|| stage_keys.first().cloned().unwrap_or_default());
 
     let mut game_state = Game {
         gd,
+        audio,
+        sound_bank,
         assets,
         phase: Phase::Title,
         select: Select::new(false, 12),
@@ -339,6 +345,8 @@ const SCANCODE_KEYS: [(u8, Key); 12] = [
 
 struct Game {
     gd: GameData,
+    audio: Option<AudioOut>,
+    sound_bank: Option<SoundBank>,
     assets: FightAssets,
     phase: Phase,
     select: Select,
@@ -408,6 +416,17 @@ impl Game {
     /// One game frame: brain for both fighters, then round bookkeeping.
     fn step_frame(&mut self, inputs: [u8; 2], ai: [bool; 2]) {
         self.fights.run_frame(&self.assets, inputs, ai);
+        // Drain the character-hook sound requests into the single-voice mixer
+        // (a new sample cuts the previous one, like the DOS driver).
+        if let (Some(audio), Some(bank)) = (&self.audio, &self.sound_bank) {
+            for id in self.fights.sound_events.drain(..) {
+                if let Some(voc) = bank.sfx.get(id as usize) {
+                    audio.play_voc(voc);
+                }
+            }
+        } else {
+            self.fights.sound_events.clear();
+        }
         if self.banner.is_none() {
             let energies = [self.fights.players[0].energy, self.fights.players[1].energy];
             if let Some(outcome) = self.fights.round.tick(energies, false) {
