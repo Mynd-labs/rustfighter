@@ -26,6 +26,19 @@ folder containing `INDEX.SF2`. The chosen folder is remembered in
 
 > The original game data files are **not** distributed with this project.
 
+**Everything in one double-clickable folder (personal use):** if you already have
+the game files, `scripts/make-bundle.sh` (run from a source checkout) produces a
+self-contained folder — program *and* game data plus a launcher — that needs no
+configuration at all:
+
+```bash
+scripts/make-bundle.sh /path/to/extracted/street-fighter-ii
+# -> Rustfighter/ (double-click rfplay) and Rustfighter.tar.gz
+```
+
+The bundle is for **personal use only**: the game data is copyrighted and must
+not be uploaded or redistributed.
+
 ## What works today
 
 | Component | Status |
@@ -74,13 +87,31 @@ Headless builds (no windowing dependency) work with
 | Key | Action |
 |---|---|
 | `1`–`4` | screens / characters / stages / fonts |
+| `0` | attract mode (auto-cycling) |
 | `←` `→` | previous/next item (frame step in character mode) |
 | `↑` `↓` | character, stage; screen pan |
 | `Space` | pause auto-play |
 | `V` | sprite bank variant (B/T) |
 | `P` | character palette (T001/T002) |
-| `S` | save screenshot |
+| `S` | save screenshot (to your home directory) |
 | `Esc` | quit |
+
+## Troubleshooting
+
+* **It seems stuck / the screen never changes:** the player starts in *attract
+  mode* and rotates through screens (every ~4 s), characters and stages
+  automatically. Press `0` to return to attract, `1`–`4` for a specific mode,
+  `Space` to pause/resume, `Esc` to quit. A full startup log is written to
+  `~/.config/rustfighter/log.txt`.
+* **"Game files not found" window:** put the extracted game folder where the app
+  looks (next to the program, `~/Downloads`, `~/Desktop`, `~/Games`) and it is
+  found automatically — or launch `rfplay --game <folder>`, or use the folder
+  picker that appears on first start. The choice is remembered.
+* **AppImage does not start:** on Ubuntu 24.04 install FUSE first
+  (`sudo apt install libfuse2t64`), or use the `.deb` / personal bundle instead.
+* **Wrong colours or missing artwork:** report it with the log file and your
+  distribution; rendering is validated against all 3,749 records on the
+  reference data set.
 
 ## Reverse-engineering documentation
 

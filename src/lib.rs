@@ -11,6 +11,7 @@
 //! * [`canvas`]  — 8-bit indexed framebuffer with blitter/text helpers.
 //! * [`gamedata`]— ties it together: loads the original data files and decodes assets.
 
+pub mod binfont;
 pub mod canvas;
 pub mod font;
 pub mod gamedata;

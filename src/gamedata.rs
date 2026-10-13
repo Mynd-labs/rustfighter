@@ -157,6 +157,11 @@ pub fn save_game_dir(dir: &Path) {
     let _ = std::fs::write(path, format!("game_dir={}\n", dir.display()));
 }
 
+/// Breadth-first search for a directory containing `INDEX.SF2` (public wrapper).
+pub fn find_game_in(root: &Path, max_depth: usize) -> Option<PathBuf> {
+    scan_for_game(root, max_depth)
+}
+
 /// Breadth-first search for a directory containing `INDEX.SF2`.
 fn scan_for_game(root: &Path, max_depth: usize) -> Option<PathBuf> {
     let mut queue = vec![(root.to_path_buf(), 0usize)];
