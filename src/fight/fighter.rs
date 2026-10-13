@@ -68,6 +68,9 @@ pub struct Fighter {
     pub b0b: u8,
     /// `+0x0D` set to 2 at spawn.
     pub b0d: u8,
+    /// `+0x0E` set to `0x18` when a connect is made against a wall-flagged
+    /// defender (`0x1228D`).
+    pub b0e: u8,
     /// `+0x14` **energy** (100 at spawn).
     pub energy: u8,
     /// `+0x15` 0 at spawn.
@@ -82,6 +85,9 @@ pub struct Fighter {
     pub w1a: u16,
     /// `+0x1B` 0 at spawn.
     pub b1b: u8,
+    /// `+0x1E` reaction animation id — the action id that last hit this
+    /// fighter (written by `0x122A0`, consumed by the damage routine).
+    pub reaction_anim: u8,
     /// `+0x1F` 0 at spawn.
     pub b1f: u8,
     /// `+0x21` pending AI timer delta.
@@ -102,6 +108,7 @@ impl Fighter {
             flags_b: 0,
             b0b: 100,
             b0d: 2,
+            b0e: 0,
             energy: 100,
             b15: 0,
             b16: 100,
@@ -109,6 +116,7 @@ impl Fighter {
             b19: 0,
             w1a: 2,
             b1b: 0,
+            reaction_anim: 0,
             b1f: 0,
             b21: 0,
             ai_timer: 0,
