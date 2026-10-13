@@ -22,7 +22,7 @@ cargo build --release --features audio
 
 rm -rf "$out"
 mkdir -p "$out/street-fighter-ii"
-cp target/release/rfplay target/release/rfdump "$out/"
+cp target/release/rfight target/release/rfplay target/release/rfdump "$out/"
 cp README.md LICENSE "$out/"
 cp -a "$game"/. "$out/street-fighter-ii/"
 
@@ -59,8 +59,9 @@ strip "$out/rfplay" "$out/rfdump" 2>/dev/null || true
 # Also include a single-file standalone build with the data inside the binary.
 if SF2_DIR="$game" cargo build --release --features embedded,audio \
     --target-dir target/standalone >/dev/null 2>&1; then
+    cp target/standalone/release/rfight "$out/rfight-standalone"
     cp target/standalone/release/rfplay "$out/rfplay-standalone"
-    chmod +x "$out/rfplay-standalone"
+    chmod +x "$out/rfight-standalone" "$out/rfplay-standalone"
     strip "$out/rfplay-standalone" 2>/dev/null || true
 fi
 
