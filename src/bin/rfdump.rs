@@ -31,21 +31,28 @@ fn main() {
             }
         }
     }
-    let game = game
-        .or_else(find_game_dir)
-        .unwrap_or_else(|| {
-            eprintln!("game directory not found; pass --game or set SF2_DIR");
-            std::process::exit(1)
-        });
-    let out = out.unwrap_or_else(|| PathBuf::from("rfdump-out"));
-    let gd = GameData::load(&game).unwrap_or_else(|e| {
-        eprintln!("failed to load game data: {e}");
-        std::process::exit(1);
-    });
+    let gd = match game.or_else(find_game_dir) {
+        Some(dir) => GameData::load(&dir).unwrap_or_else(|e| {
+            eprintln!("failed to load game data from {}: {e}", dir.display());
+            std::process::exit(1);
+        }),
+        None => match GameData::load_embedded() {
+            Ok(gd) => {
+                println!("using compiled-in game data");
+                gd
+            }
+            Err(_) => {
+                eprintln!(
+                    "game directory not found; pass --game, set SF2_DIR, or build with --features embedded"
+                );
+                std::process::exit(1);
+            }
+        },
+    };
     println!(
         "loaded {} records from {} (files: {})",
         gd.index.records.len(),
-        game.display(),
+        gd.dir.display(),
         gd.index
             .files
             .iter()
@@ -54,6 +61,7 @@ fn main() {
             .collect::<Vec<_>>()
             .join(", ")
     );
+    let out = out.unwrap_or_else(|| PathBuf::from("rfdump-out"));
 
     let do_all = what == "all";
     let mut summary = Summary::default();

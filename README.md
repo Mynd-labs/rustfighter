@@ -39,6 +39,18 @@ scripts/make-bundle.sh /path/to/extracted/street-fighter-ii
 The bundle is for **personal use only**: the game data is copyrighted and must
 not be uploaded or redistributed.
 
+**Fully standalone single file (personal):** `scripts/make-standalone.sh`
+compiles the game data *into* the binary (`--features embedded`), so the result
+needs no game files at all:
+
+```bash
+scripts/make-standalone.sh /path/to/extracted/street-fighter-ii
+# -> rustfighter-standalone (~6 MB, single file) + headless rfdump
+```
+
+Again personal use only — the binary contains the copyrighted data and must not
+be published or redistributed. Official releases ship **without** game data.
+
 ## What works today
 
 | Component | Status |

@@ -208,7 +208,54 @@ fn read_case_insensitive(dir: &Path, name: &str) -> Option<Vec<u8>> {
     None
 }
 
+/// Directory marker used for compiled-in data.
+pub const EMBEDDED_DIR: &str = "<embedded>";
+
+#[cfg(feature = "embedded")]
+fn imp_embedded() -> Result<GameData, String> {
+    let map = crate::embedded::map();
+    let index_bytes = map
+        .get("INDEX.SF2")
+        .ok_or_else(|| "embedded INDEX.SF2 missing".to_string())?;
+    let index = AssetIndex::parse(index_bytes).map_err(|e| e.to_string())?;
+    let mut files = Vec::with_capacity(index.files.len());
+    for name in &index.files {
+        if name.is_empty() {
+            files.push(Vec::new());
+            continue;
+        }
+        let data = map
+            .get(&name.to_uppercase())
+            .ok_or_else(|| format!("embedded data file {name} missing"))?;
+        files.push(data.to_vec());
+    }
+    Ok(GameData {
+        dir: PathBuf::from(EMBEDDED_DIR),
+        index,
+        files,
+        decoded: RefCell::new(HashMap::new()),
+    })
+}
+
+#[cfg(not(feature = "embedded"))]
+fn imp_embedded() -> Result<GameData, String> {
+    Err("this build has no embedded game data (build with --features embedded)".to_string())
+}
+
 impl GameData {
+    /// Load the compiled-in asset bundle (build with `--features embedded`).
+    ///
+    /// The bundle contains the original game data, so such builds are personal
+    /// use only and must not be redistributed.
+    pub fn load_embedded() -> Result<Self, String> {
+        imp_embedded()
+    }
+
+    /// True when this instance runs from compiled-in data.
+    pub fn is_embedded(&self) -> bool {
+        self.dir.as_os_str() == EMBEDDED_DIR
+    }
+
     /// Load and cache all data files named by `INDEX.SF2`.
     pub fn load(dir: &Path) -> Result<Self, String> {
         let index_bytes = std::fs::read(dir.join("INDEX.SF2"))

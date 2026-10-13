@@ -54,6 +54,15 @@ arrows navigate, Space pauses, V/P variants, S screenshot, Esc quits.
 EOF
 
 chmod +x "$out/rfplay" "$out/rfdump"
+strip "$out/rfplay" "$out/rfdump" 2>/dev/null || true
+
+# Also include a single-file standalone build with the data inside the binary.
+if SF2_DIR="$game" cargo build --release --features embedded \
+    --target-dir target/standalone >/dev/null 2>&1; then
+    cp target/standalone/release/rfplay "$out/rfplay-standalone"
+    chmod +x "$out/rfplay-standalone"
+    strip "$out/rfplay-standalone" 2>/dev/null || true
+fi
 
 archive="$out.tar.gz"
 tar -czf "$archive" -C "$(dirname "$out")" "$(basename "$out")"

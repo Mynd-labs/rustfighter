@@ -90,36 +90,30 @@ fn main() {
         std::env::args().skip(1).collect::<Vec<_>>().join(" ")
     ));
 
-    let game = match game {
-        Some(dir) => Some(dir),
-        None => find_game_dir().or_else(|| {
-            log_line("no game folder found automatically; opening folder picker");
-            pick_game_folder()
-        }),
-    };
+    let candidate = game.or_else(find_game_dir);
+
+    // 1. external folder if one was given/found, 2. compiled-in data
+    // (standalone builds), 3. folder picker as a last resort.
+    let mut gd = candidate.as_deref().and_then(load_external_dir);
+    let mut embedded = false;
+    if gd.is_none() {
+        match GameData::load_embedded() {
+            Ok(loaded) => {
+                log_line("using compiled-in game data (standalone build)");
+                gd = Some(loaded);
+                embedded = true;
+            }
+            Err(e) => log_line(&format!("no compiled-in game data: {e}")),
+        }
+    }
+    if gd.is_none() {
+        log_line("no game folder found automatically; opening folder picker");
+        if let Some(dir) = pick_game_folder() {
+            gd = load_external_dir(&dir);
+        }
+    }
 
     // Try to load; on failure show a real error window (or dump it headlessly).
-    let gd = game.as_deref().and_then(|dir| {
-        if !rustfighter::gamedata::is_game_dir(dir) {
-            log_line(&format!("{} has no INDEX.SF2", dir.display()));
-            return None;
-        }
-        match GameData::load(dir) {
-            Ok(gd) => {
-                log_line(&format!(
-                    "loaded {} records from {}",
-                    gd.index.records.len(),
-                    dir.display()
-                ));
-                Some(gd)
-            }
-            Err(e) => {
-                log_line(&format!("failed to load {}: {e}", dir.display()));
-                None
-            }
-        }
-    });
-
     let Some(gd) = gd else {
         let lines = [
             "STREET FIGHTER II - FILES NOT FOUND",
@@ -150,7 +144,9 @@ fn main() {
         return;
     };
 
-    rustfighter::gamedata::save_game_dir(&gd.dir);
+    if !embedded {
+        rustfighter::gamedata::save_game_dir(&gd.dir);
+    }
 
     let mut app = App::new(gd);
     if let Some(dir) = shot {
@@ -667,6 +663,28 @@ impl App {
         binfont::draw_text(&mut canvas, "0123456789 (.,:;!?%)", 8, y, 1);
         self.draw_label(&mut canvas, "fonts", 0);
         canvas
+    }
+}
+
+/// Load a game folder, logging the outcome.
+fn load_external_dir(dir: &std::path::Path) -> Option<GameData> {
+    if !rustfighter::gamedata::is_game_dir(dir) {
+        log_line(&format!("{} has no INDEX.SF2", dir.display()));
+        return None;
+    }
+    match GameData::load(dir) {
+        Ok(gd) => {
+            log_line(&format!(
+                "loaded {} records from {}",
+                gd.index.records.len(),
+                dir.display()
+            ));
+            Some(gd)
+        }
+        Err(e) => {
+            log_line(&format!("failed to load {}: {e}", dir.display()));
+            None
+        }
     }
 }
 

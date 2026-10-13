@@ -65,6 +65,21 @@ fn every_sprite_expands_exactly() {
     assert_eq!(ok, 3223, "expected 3223 sprite records");
 }
 
+#[cfg(feature = "embedded")]
+#[test]
+fn embedded_assets_are_complete() {
+    use rustfighter::gamedata::GameData;
+    let gd = GameData::load_embedded().expect("embedded game data");
+    assert!(gd.is_embedded());
+    assert_eq!(gd.index.records.len(), 3749);
+    let mut decoded = 0usize;
+    for rec in &gd.index.records {
+        gd.decoded_record(rec).expect("decode embedded record");
+        decoded += 1;
+    }
+    assert_eq!(decoded, 3749);
+}
+
 #[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
