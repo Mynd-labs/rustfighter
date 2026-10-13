@@ -107,6 +107,9 @@ fn main() {
         banner: None,
         banner_timer: 0,
         hitbox_overlay: false,
+        wins: [0, 0],
+        round_no: 1,
+        opponent_index: 0,
     };
     game_state.fights.objects[0].y = GROUND;
     game_state.fights.objects[1].y = GROUND;
@@ -361,6 +364,12 @@ struct Game {
     banner: Option<String>,
     banner_timer: u32,
     hitbox_overlay: bool,
+    /// Round wins per player (`0x2A2C+2` / `0x2A32+2` battle records).
+    wins: [u8; 2],
+    /// Round number within the current bout (`0x2A3A`).
+    round_no: u8,
+    /// Opponent ladder index (`0x451A`-driven roster progression).
+    opponent_index: usize,
 }
 
 impl Game {
@@ -379,6 +388,14 @@ impl Game {
     fn start_fight(&mut self, chars: [u8; 2]) {
         let c1 = (chars[0] / 2) as usize;
         let c2 = (chars[1] / 2) as usize;
+        self.opponent_index = c2;
+        self.wins = [0, 0];
+        self.round_no = 1;
+        self.start_fight_indices(c1, c2);
+    }
+
+    /// Build (or rebuild) the fight for two character indices.
+    fn start_fight_indices(&mut self, c1: usize, c2: usize) {
         self.fights = FightState::new(c1, c2, 0);
         self.fights.objects[0].y = GROUND;
         self.fights.objects[1].y = GROUND;
@@ -430,20 +447,57 @@ impl Game {
         if self.banner.is_none() {
             let energies = [self.fights.players[0].energy, self.fights.players[1].energy];
             if let Some(outcome) = self.fights.round.tick(energies, false) {
-                self.banner = Some(match outcome {
-                    RoundOutcome::Winner { player } => format!("PLAYER {} WINS", player + 1),
-                    RoundOutcome::Draw => "DRAW GAME".to_string(),
-                    RoundOutcome::TimeOver { winner: Some(p) } => {
-                        format!("TIME OVER - PLAYER {} WINS", p + 1)
+                // Battle records: winner takes a round win (`0x2A2C+2`).
+                let winner = match outcome {
+                    RoundOutcome::Winner { player } => Some(player),
+                    RoundOutcome::TimeOver { winner } => winner,
+                    RoundOutcome::Draw => None,
+                };
+                if let Some(p) = winner {
+                    self.wins[p] = self.wins[p].saturating_add(1);
+                }
+                let text = if self.wins[0] >= 2 {
+                    "YOU WIN THE BOUT".to_string()
+                } else if self.wins[1] >= 2 {
+                    "YOU LOSE - GAME OVER".to_string()
+                } else {
+                    match outcome {
+                        RoundOutcome::Winner { player } => format!("PLAYER {} WINS THE ROUND", player + 1),
+                        RoundOutcome::Draw => "DRAW GAME".to_string(),
+                        RoundOutcome::TimeOver { winner: Some(p) } => {
+                            format!("TIME OVER - PLAYER {} WINS", p + 1)
+                        }
+                        RoundOutcome::TimeOver { winner: None } => "TIME OVER - DRAW".to_string(),
                     }
-                    RoundOutcome::TimeOver { winner: None } => "TIME OVER - DRAW".to_string(),
-                });
+                };
+                self.banner = Some(text);
                 self.banner_timer = 180;
             }
         } else {
             self.banner_timer = self.banner_timer.saturating_sub(1);
             if self.banner_timer == 0 {
-                self.reset_round();
+                // Bout over? Next opponent, or back to the title on a loss.
+                if self.wins[0] >= 2 {
+                    self.wins = [0, 0];
+                    self.round_no = 1;
+                    // Ladder progression: next opponent in engine order, then
+                    // wrap through the expanded roster (bosses last).
+                    self.opponent_index = (self.opponent_index + 1) % 12;
+                    let next = ENGINE_TABLE_STEMS[(self.opponent_index % 12).max(1)];
+                    let c1 = (self.fights.objects[0].char2 / 2) as usize;
+                    let c2 = ENGINE_TABLE_STEMS
+                        .iter()
+                        .position(|&s| s == next)
+                        .unwrap_or(3);
+                    self.start_fight_indices(c1, c2);
+                } else if self.wins[1] >= 2 {
+                    self.wins = [0, 0];
+                    self.round_no = 1;
+                    self.phase = Phase::Title;
+                } else {
+                    self.round_no += 1;
+                    self.reset_round();
+                }
             }
         }
     }
@@ -677,6 +731,23 @@ impl Game {
             let banner = banner.clone();
             binfont::draw_text(canvas, &banner, 60, 80, 254);
         }
+        // Wins markers (battle records) next to each label.
+        let wins = format!("{}", self.wins[0]);
+        let _ = wins;
+        binfont::draw_text(
+            canvas,
+            &format!("WINS {}", self.wins[0]),
+            4,
+            176,
+            254,
+        );
+        binfont::draw_text(
+            canvas,
+            &format!("WINS {}", self.wins[1]),
+            240,
+            176,
+            254,
+        );
         // Footer labels: fighters + stage.
         binfont::draw_text(
             canvas,
