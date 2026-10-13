@@ -510,9 +510,18 @@ impl Game {
                 let _ = flipped;
             }
         }
-        // Projectiles (fireball flicker pair).
+        // Projectiles (per-kind sprite sets).
         for p in &self.fights.projectiles {
-            let sprite = self.assets.fireball.get((p.flicker / 2) as usize & 1);
+            let set = match p.kind {
+                rustfighter::fight::chars::ProjKind::Fireball => &self.assets.fireball,
+                rustfighter::fight::chars::ProjKind::Sonic => &self.assets.sonic,
+                rustfighter::fight::chars::ProjKind::TigerShot => &self.assets.tiger,
+            };
+            let sprite = if set.is_empty() {
+                None
+            } else {
+                Some(&set[p.anim as usize % set.len()])
+            };
             if let Some(sprite) = sprite {
                 let base = if p.owner == 0 { PALETTE_BASE_P1 } else { PALETTE_BASE_P2 };
                 let x = p.x as i32 - sprite.width as i32 / 2;

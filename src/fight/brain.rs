@@ -36,6 +36,10 @@ use crate::gamedata::GameData;
 pub struct FightAssets {
     /// Fireball sprite frames (`sprFIREBAL0/1`, the flicker pair).
     pub fireball: Vec<crate::sprite::Frame>,
+    /// Sonic boom sprite frames.
+    pub sonic: Vec<crate::sprite::Frame>,
+    /// Tiger shot sprite frames.
+    pub tiger: Vec<crate::sprite::Frame>,
     /// `frm<CHAR>` tables in engine character order.
     pub frm: Vec<FrmTable>,
     /// `ani<CHAR>` tables in engine character order.
@@ -73,11 +77,23 @@ impl FightAssets {
                 fireball.push(frame);
             }
         }
-        Ok(FightAssets { fireball, frm, ani, ait })
+        let mut sonic = Vec::new();
+        for name in crate::fight::chars::SONIC_SPRITES {
+            if let Ok(frame) = gd.sprite(name) {
+                sonic.push(frame);
+            }
+        }
+        let mut tiger = Vec::new();
+        for name in crate::fight::chars::TIGER_SPRITES {
+            if let Ok(frame) = gd.sprite(name) {
+                tiger.push(frame);
+            }
+        }
+        Ok(FightAssets { fireball, sonic, tiger, frm, ani, ait })
     }
 }
 
-/// A live projectile (fireball).
+/// A live projectile (fireball / sonic boom / tiger shot).
 #[derive(Debug, Clone, Copy)]
 pub struct Projectile {
     /// World X.
@@ -96,6 +112,10 @@ pub struct Projectile {
     pub width: u8,
     /// Sprite height.
     pub height: u8,
+    /// Sprite set / behaviour.
+    pub kind: chars::ProjKind,
+    /// Animation cursor into the sprite set.
+    pub anim: usize,
 }
 
 /// The two fighters and the globals one fight frame touches.
@@ -993,11 +1013,12 @@ impl FightState {
         if self.projectiles.len() >= 8 {
             return;
         }
-        let (w, h) = assets
-            .fireball
-            .first()
-            .map(|f| (f.width, f.height))
-            .unwrap_or((0, 0));
+        let set = match req.kind {
+            chars::ProjKind::Fireball => &assets.fireball,
+            chars::ProjKind::Sonic => &assets.sonic,
+            chars::ProjKind::TigerShot => &assets.tiger,
+        };
+        let (w, h) = set.first().map(|f| (f.width, f.height)).unwrap_or((0, 0));
         self.objects[owner].flags38 |= 0x40;
         self.projectiles.push(Projectile {
             x: req.x,
@@ -1008,6 +1029,8 @@ impl FightState {
             flicker: 0,
             width: w,
             height: h,
+            kind: req.kind,
+            anim: 0,
         });
         // 0x16A71: movement lockout from the frame-rate scalar.
         self.players[owner].b1f = 4 * 4;
@@ -1018,6 +1041,7 @@ impl FightState {
         for p in &mut self.projectiles {
             p.x = p.x.wrapping_add(p.x_speed);
             p.flicker ^= 2;
+            p.anim += 1;
         }
         self.projectiles.retain(|p| p.x > -0x30 && p.x < 0x150);
     }

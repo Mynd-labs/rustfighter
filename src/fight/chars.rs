@@ -10,6 +10,17 @@
 //! Character order (engine): KEN, GUILE, E-HONDA, RYU, ZANGIEF, CHUN LI,
 //! DHALSIM, BLANKA, BALROG, VEGA, SAGAT, M.BISON.
 
+/// Which sprite set / behaviour a projectile uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjKind {
+    /// KEN / RYU hadouken (`sprFIREBAL0/1`).
+    Fireball,
+    /// GUILE sonic boom (`sprSONICBM1..4`).
+    Sonic,
+    /// SAGAT tiger shot (`sprTIGSHOT1/2`).
+    TigerShot,
+}
+
 /// A projectile spawn requested by a mode-4 handler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpawnRequest {
@@ -23,6 +34,8 @@ pub struct SpawnRequest {
     pub palette: u16,
     /// Spawning action id (becomes the projectile's reaction id).
     pub action: u8,
+    /// Sprite set / behaviour.
+    pub kind: ProjKind,
 }
 
 /// Mode-0 hooks (`0x17BC2`): sounds at action start.
@@ -115,6 +128,7 @@ pub fn tick_hook(
                     x_speed,
                     palette: palette.wrapping_add(0x2020),
                     action: 0x35,
+                    kind: ProjKind::Fireball,
                 });
             }
         }
@@ -134,8 +148,41 @@ pub fn tick_hook(
         }
         _ => {}
     }
-    // TODO: GUILE (0xC35) / DHALSIM (0x1434, 0x1035) / SAGAT (0x1435, 0xC34/6)
-    // spawn objects whose sprite tables are not extracted yet.
+    // GUILE sonic boom: AX == 0xC35 (action 0x35, slot 0x0C).
+    if char == 1
+        && action == 0x35
+        && sub_action == 0x0C
+        && flags38 & 0x40 == 0
+        && lockout == 0
+    {
+        let x = obj_x + if facing_right { 0x1E } else { -0x34 };
+        return Some(SpawnRequest {
+            x,
+            y: player_y - 0x34,
+            x_speed: if facing_right { 0x1E } else { -0x1E },
+            palette: palette.wrapping_add(0x2020),
+            action: 0x35,
+            kind: ProjKind::Sonic,
+        });
+    }
+    // SAGAT tiger shots: 0x35@0x14 (main), 0x34/0x36@0x0C (high/low).
+    if char == 10 && flags38 & 0x40 == 0 && lockout == 0 {
+        let slot_ok = (action == 0x35 && sub_action == 0x14)
+            || (matches!(action, 0x34 | 0x36) && sub_action == 0x0C);
+        if slot_ok {
+            let x = obj_x + if facing_right { 0x1E } else { -0x34 };
+            return Some(SpawnRequest {
+                x,
+                y: player_y - 0x34,
+                x_speed: if facing_right { 0x1E } else { -0x1E },
+                palette: palette.wrapping_add(0x2020),
+                action,
+                kind: ProjKind::TigerShot,
+            });
+        }
+    }
+    // TODO: DHALSIM yoga fire / flame attached effects (sprite tables known:
+    // DS:0x3770 by parent frame, DS:0x3796 flame pair).
     None
 }
 
@@ -169,6 +216,10 @@ pub fn ko_hook(char: usize, ch: u8, sounds: &mut Vec<u8>) {
 
 /// Fireball sprite handles (flicker table `DS:0x376C[0..2]`).
 pub const FIREBALL_SPRITES: [&str; 2] = ["sprFIREBAL0", "sprFIREBAL1"];
+/// Sonic boom sprites (`DS:0x3796` region).
+pub const SONIC_SPRITES: [&str; 4] = ["sprSONICBM1", "sprSONICBM2", "sprSONICBM3", "sprSONICBM4"];
+/// Tiger shot sprites.
+pub const TIGER_SPRITES: [&str; 2] = ["sprTIGSHOT1", "sprTIGSHOT2"];
 
 #[cfg(test)]
 mod tests {
