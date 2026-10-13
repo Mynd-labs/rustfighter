@@ -32,7 +32,7 @@ cat > "$out/Rustfighter.desktop" <<EOF
 Type=Application
 Name=Rustfighter
 Comment=Street Fighter II (DOS) native player (personal bundle)
-Exec=$abs/rfplay
+Exec=$abs/rfight
 Icon=applications-games
 Terminal=false
 Categories=Game;ArcadeGame;
