@@ -22,6 +22,7 @@ use rustfighter::fight::ani::build_hitboxes;
 use rustfighter::fight::brain::{FightAssets, FightState};
 use rustfighter::fight::render::{draw_ani_frame, install_character_palettes, PALETTE_BASE_P1, PALETTE_BASE_P2};
 use rustfighter::fight::round::RoundOutcome;
+use rustfighter::fight::select::{Dir, Select};
 use rustfighter::fight::rng::Rng;
 use rustfighter::gamedata::{find_game_dir, GameData, ENGINE_TABLE_STEMS};
 use rustfighter::input::{Button, InputConfig, InputState};
@@ -87,6 +88,10 @@ fn main() {
     let mut game_state = Game {
         gd,
         assets,
+        phase: Phase::Title,
+        select: Select::new(false, 12),
+        flags: Vec::new(),
+        cursors: Vec::new(),
         fights: FightState::new(p1_index, p2_index, 0),
         stage_key,
         stage: None,
@@ -106,9 +111,19 @@ fn main() {
     }
     game_state.fights.rng = Rng::seeded(0x9E37, 0x79B9);
     game_state.fights.prime(&game_state.assets);
+    game_state.load_select_assets();
 
     if let Some(dir) = shot {
         std::fs::create_dir_all(&dir).expect("shot dir");
+        if std::env::var("SHOT_SELECT").is_ok() {
+            game_state.phase = Phase::SelectScreen;
+            game_state.load_select_assets();
+            let canvas = game_state.render();
+            let path = dir.join("select.png");
+            canvas.save_png(&path).expect("save shot");
+            println!("shot: {}", path.display());
+            return;
+        }
         for f in 0..frames {
             if fireball_at == Some(f) {
                 game_state.fights.debug_action = Some((0, 0x35));
@@ -187,7 +202,7 @@ fn main() {
     window.set_target_fps(60);
 
     let mut buffer = vec![0u32; W * H];
-    while window.is_open() && !window.is_key_down(Key::Escape) {
+    while window.is_open() {
         // Host keys -> engine scancodes (CONFIG.SF2 bindings).
         let mut down = [false; 256];
         for (scancode, key) in SCANCODE_KEYS {
@@ -214,6 +229,17 @@ fn main() {
         if game_state.keys.just_pressed(0, Button::Kick) {
             raw |= 0x20;
         }
+        // Global quit: ESC held in Title or with Shift in Fight.
+        if game_state.phase == Phase::Title
+            && window.is_key_pressed(Key::Escape, minifb::KeyRepeat::No)
+        {
+            break;
+        }
+        if window.is_key_pressed(Key::Q, minifb::KeyRepeat::No)
+            && window.is_key_down(Key::LeftCtrl)
+        {
+            break;
+        }
         // Debug attack keys 1..4 (override the chooser for P1).
         game_state.fights.debug_action = None;
         for (i, key) in [Key::Key1, Key::Key2, Key::Key3, Key::Key4].iter().enumerate() {
@@ -231,7 +257,51 @@ fn main() {
         if window.is_key_pressed(Key::F1, minifb::KeyRepeat::No) {
             game_state.hitbox_overlay = !game_state.hitbox_overlay;
         }
-        game_state.step_frame([raw, 0], [false, true]);
+        match game_state.phase {
+            Phase::Title => {
+                if game_state.keys.just_pressed(0, Button::Punch)
+                    || game_state.keys.just_pressed(0, Button::Kick)
+                {
+                    game_state.phase = Phase::SelectScreen;
+                    game_state.load_select_assets();
+                }
+            }
+            Phase::SelectScreen => {
+                // P1 cursor: arrows move, punch/kick confirm, ESC aborts.
+                if game_state.keys.just_pressed(0, Button::Up) {
+                    game_state.select.move_cursor(0, Dir::Up);
+                }
+                if game_state.keys.just_pressed(0, Button::Down) {
+                    game_state.select.move_cursor(0, Dir::Down);
+                }
+                if game_state.keys.just_pressed(0, Button::Left) {
+                    game_state.select.move_cursor(0, Dir::Left);
+                }
+                if game_state.keys.just_pressed(0, Button::Right) {
+                    game_state.select.move_cursor(0, Dir::Right);
+                }
+                if game_state.keys.just_pressed(0, Button::Punch)
+                    || game_state.keys.just_pressed(0, Button::Kick)
+                {
+                    if game_state.select.confirm(0) {
+                        let mut rng = game_state.fights.rng;
+                        game_state.select.cpu_pick(&mut rng);
+                        game_state.fights.rng = rng;
+                        let (_, chars) = game_state.select.outcome();
+                        game_state.start_fight(chars);
+                    }
+                }
+                if window.is_key_down(Key::Escape) {
+                    game_state.phase = Phase::Title;
+                }
+            }
+            Phase::Fight => {
+                game_state.step_frame([raw, 0], [false, true]);
+                if window.is_key_pressed(Key::Escape, minifb::KeyRepeat::No) {
+                    game_state.phase = Phase::Title;
+                }
+            }
+        }
         let canvas = game_state.render();
         let rgb = canvas.to_rgb();
         for (i, px) in rgb.chunks_exact(3).enumerate() {
@@ -240,6 +310,13 @@ fn main() {
         window.update_with_buffer(&buffer, W, H).expect("update");
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Title,
+    SelectScreen,
+    Fight,
 }
 
 /// The keys we feed through the scancode layer (CONFIG.SF2 defaults).
@@ -261,6 +338,10 @@ const SCANCODE_KEYS: [(u8, Key); 12] = [
 struct Game {
     gd: GameData,
     assets: FightAssets,
+    phase: Phase,
+    select: Select,
+    flags: Vec<Option<rustfighter::sprite::Frame>>,
+    cursors: Vec<Option<rustfighter::sprite::Frame>>,
     fights: FightState,
     stage_key: String,
     stage: Option<rustfighter::gamedata::Stage>,
@@ -273,6 +354,35 @@ struct Game {
 }
 
 impl Game {
+    fn load_select_assets(&mut self) {
+        self.flags = rustfighter::fight::select::FLAG_SPRITES
+            .iter()
+            .map(|name| self.gd.sprite(name).ok())
+            .collect();
+        self.cursors = rustfighter::fight::select::CURSOR_SPRITES
+            .iter()
+            .map(|name| self.gd.sprite(name).ok())
+            .collect();
+    }
+
+    /// Build the fight from the select outcome (char2 values).
+    fn start_fight(&mut self, chars: [u8; 2]) {
+        let c1 = (chars[0] / 2) as usize;
+        let c2 = (chars[1] / 2) as usize;
+        self.fights = FightState::new(c1, c2, 0);
+        self.fights.objects[0].y = GROUND;
+        self.fights.objects[1].y = GROUND;
+        self.fights.ground_y = 0;
+        if let Some(stage) = &self.stage {
+            self.fights.stage_max_pan = (stage.width as i32 - W as i32).max(0);
+        }
+        self.fights.rng = rustfighter::fight::rng::Rng::seeded(0x2B1D, 0x77C3);
+        self.fights.prime(&self.assets);
+        self.banner = None;
+        self.phase = Phase::Fight;
+        self.load_stage();
+    }
+
     fn load_stage(&mut self) {
         if let Ok(stage) = self.gd.load_stage(&self.stage_key) {
             self.stage_w = stage.width as i32;
@@ -318,6 +428,11 @@ impl Game {
     }
 
     fn render(&mut self) -> Canvas {
+        match self.phase {
+            Phase::Title => return self.render_title(),
+            Phase::SelectScreen => return self.render_select(),
+            Phase::Fight => {}
+        }
         let mut canvas = Canvas::new(W, H);
         canvas.clear(0);
         // Character palettes from the real assets.
@@ -416,8 +531,88 @@ impl Game {
             .unwrap_or_default()
     }
 
+    fn render_title(&mut self) -> Canvas {
+        let mut canvas = Canvas::new(W, H);
+        canvas.clear(0);
+        canvas.palette.colors.resize(256, [0, 0, 0]);
+        canvas.palette.colors[254] = [255, 255, 255];
+        if let Some(info) = self.gd.screens().into_iter().find(|s| s.name == "linSF2BLOGO") {
+            if let Ok(logo) = self.gd.load_screen(&info) {
+                let x = (W as i32 - logo.width as i32) / 2;
+                let y = (H as i32 - logo.height as i32) / 2;
+                for sy in 0..logo.height {
+                    for sx in 0..logo.width {
+                        let px = logo.pixels[sy * logo.width + sx];
+                        canvas.set(x + sx as i32, y + sy as i32, px);
+                    }
+                }
+                canvas.palette = logo.palette.clone();
+                canvas.palette.colors[254] = [255, 255, 255];
+            }
+        }
+        binfont::draw_text(&mut canvas, "STREET FIGHTER II - RUST PORT", 40, 110, 254);
+        binfont::draw_text(&mut canvas, "PRESS ENTER OR SPACE TO START", 44, 130, 254);
+        binfont::draw_text(&mut canvas, "ARROWS MOVE   ENTER/SPACE CONFIRM", 34, 150, 254);
+        canvas
+    }
+
+    fn render_select(&mut self) -> Canvas {
+        let mut canvas = Canvas::new(W, H);
+        canvas.clear(0);
+        canvas.palette.colors.resize(256, [0, 0, 0]);
+        canvas.palette.colors[254] = [255, 255, 255];
+        // World map.
+        if let Some(info) = self.gd.screens().into_iter().find(|s| s.name == "linSELECMAP") {
+            if let Ok(map) = self.gd.load_screen(&info) {
+                let mx = 32i32;
+                let my = 36i32;
+                for sy in 0..map.height {
+                    for sx in 0..map.width {
+                        let px = map.pixels[sy * map.width + sx];
+                        canvas.set(mx + sx as i32, my + sy as i32, px);
+                    }
+                }
+                canvas.palette = map.palette.clone();
+                for c in canvas.palette.colors.iter_mut() {
+                    if rustfighter::palette::is_sky_key(*c) {
+                        *c = [16, 16, 40];
+                    }
+                }
+                canvas.palette.colors[254] = [255, 255, 255];
+            }
+        }
+        // Flags for every character at their map markers.
+        for (i, flag) in self.flags.iter().enumerate().take(12) {
+            if let Some(flag) = flag {
+                let (x, y, _dx, _dy) = rustfighter::fight::select::MARKER_POS[i];
+                let fx = 32 + x as i32 - flag.width as i32 / 2;
+                let fy = 36 + y as i32 - flag.height as i32 / 2;
+                rustfighter::fight::render::draw_layer(&mut canvas, flag, fx, fy, 0x70);
+            }
+        }
+        // Cursors at the markers of the current cells.
+        for player in 0..2 {
+            let cell = self.select.cells[player];
+            let char2 = rustfighter::fight::select::CELL_TO_CHAR2[cell as usize];
+            let (x, y, dx, dy) = rustfighter::fight::select::MARKER_POS[(char2 / 2) as usize];
+            if let Some(cursor) = self.cursors.get(player).and_then(|c| c.as_ref()) {
+                let cx = 32 + x as i32 + dx as i32 - cursor.width as i32 / 2;
+                let cy = 36 + y as i32 + dy as i32 - cursor.height as i32 / 2;
+                rustfighter::fight::render::draw_layer(&mut canvas, cursor, cx, cy, 0x70);
+            }
+        }
+        binfont::draw_text(&mut canvas, "PLAYER SELECT", 110, 4, 254);
+        binfont::draw_text(&mut canvas, "1P", 8, 170, 254);
+        binfont::draw_text(&mut canvas, "ARROWS MOVE  ENTER/SPACE PICK  ESC BACK", 30, 186, 254);
+        if self.select.locked[0] {
+            binfont::draw_text(&mut canvas, "READY", 270, 170, 254);
+        }
+        canvas
+    }
+
     /// Provisional HUD: energy bars + timer digits (exact 0x1488D style pending).
     fn draw_hud(&mut self, canvas: &mut Canvas) {
+        canvas.palette.colors.resize(256, [0, 0, 0]);
         canvas.palette.colors[254] = [255, 255, 255];
         canvas.palette.colors[253] = [80, 80, 80];
         // Bars.

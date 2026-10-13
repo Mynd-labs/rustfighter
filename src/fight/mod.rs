@@ -21,6 +21,7 @@ pub mod hit;
 pub mod render;
 pub mod rng;
 pub mod round;
+pub mod select;
 pub mod tables;
 
 /// Action→sound table `DS:0x1638` (64 bytes): SFX id played for the attacker's
