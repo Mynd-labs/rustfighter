@@ -22,6 +22,7 @@
 //!   0x1C) keep the same structure with their constants.
 
 use crate::fight::ait::AitTable;
+use crate::fight::chars;
 use crate::fight::ani::AniTable;
 use crate::fight::fighter::{flag_a, DrawObject, Fighter, ACTION_IDLE, FRAME_ACC_STEP};
 use crate::fight::frm::FrmTable;
@@ -33,6 +34,8 @@ use crate::gamedata::GameData;
 
 /// All 12 characters' gameplay tables, loaded once.
 pub struct FightAssets {
+    /// Fireball sprite frames (`sprFIREBAL0/1`, the flicker pair).
+    pub fireball: Vec<crate::sprite::Frame>,
     /// `frm<CHAR>` tables in engine character order.
     pub frm: Vec<FrmTable>,
     /// `ani<CHAR>` tables in engine character order.
@@ -64,8 +67,35 @@ impl FightAssets {
                     .map_err(|e| e.to_string())?,
             );
         }
-        Ok(FightAssets { frm, ani, ait })
+        let mut fireball = Vec::new();
+        for name in crate::fight::chars::FIREBALL_SPRITES {
+            if let Ok(frame) = gd.sprite(name) {
+                fireball.push(frame);
+            }
+        }
+        Ok(FightAssets { fireball, frm, ani, ait })
     }
+}
+
+/// A live projectile (fireball).
+#[derive(Debug, Clone, Copy)]
+pub struct Projectile {
+    /// World X.
+    pub x: i16,
+    /// World Y (player space).
+    pub y: i16,
+    /// Horizontal speed.
+    pub x_speed: i16,
+    /// Reaction id applied on hit (the spawning action).
+    pub action: u8,
+    /// Owner player index.
+    pub owner: usize,
+    /// Flicker selector (0 / 2), toggled each tick (`0x16AA3`).
+    pub flicker: u8,
+    /// Sprite size used for the hit box.
+    pub width: u8,
+    /// Sprite height.
+    pub height: u8,
 }
 
 /// The two fighters and the globals one fight frame touches.
@@ -98,6 +128,15 @@ pub struct FightState {
     pub ko_flag: bool,
     /// Round state.
     pub round: Round,
+    /// Live projectiles (max 8, engine slots).
+    pub projectiles: Vec<Projectile>,
+    /// Sound requests collected from the character hooks (drained by the host).
+    pub sound_events: Vec<u8>,
+    /// One-shot sound latches `[0x37A6]` / `[0x37A7]`.
+    pub latches: (bool, bool),
+    /// Debug action override: `(player, action)` replaces the chooser's
+    /// request for that player (used by tests and the fight build's keys).
+    pub debug_action: Option<(usize, u8)>,
 }
 
 impl FightState {
@@ -124,6 +163,10 @@ impl FightState {
             score: [0, 0],
             ko_flag: false,
             round: Round::new(),
+            projectiles: Vec::new(),
+            sound_events: Vec::new(),
+            latches: (false, false),
+            debug_action: None,
         }
     }
 
@@ -148,6 +191,7 @@ impl FightState {
         }
         self.run_driver(assets, 0, inputs, ai);
         self.run_driver(assets, 1, inputs, ai);
+        self.tick_projectiles();
         self.hit_pass(assets);
     }
 
@@ -191,7 +235,10 @@ impl FightState {
         }
         self.connect_timer(i);
         self.reaction_step(assets, i, opp);
-        let request = self.choose_action(assets, i, opp, input, ai);
+        let request = match self.debug_action {
+            Some((player, action)) if player == i => action,
+            _ => self.choose_action(assets, i, opp, input, ai),
+        };
         self.start_action(assets, i, opp, request);
         false
     }
@@ -619,6 +666,10 @@ impl FightState {
             self.players[i].ai_timer = 0;
         }
         self.commit_action(i, action, script, param);
+        chars::clear_latches(char, action, &mut self.latches);
+        let mut sounds = std::mem::take(&mut self.sound_events);
+        chars::start_hook(char, action, &mut sounds);
+        self.sound_events = sounds;
     }
 
     /// Store action + script and let the frm header flags take effect
@@ -672,6 +723,11 @@ impl FightState {
                 obj.flags38 |= 0x08;
             }
         }
+        {
+            let mut sounds = std::mem::take(&mut self.sound_events);
+            chars::script_hook((obj.char2 / 2) as usize, obj.action, &mut sounds);
+            self.sound_events = sounds;
+        }
         match obj.action {
             0x42..=0x44 => {
                 obj.flags38 |= 0x80;
@@ -705,7 +761,34 @@ impl FightState {
 
     /// `0x10D45` + movement — the per-frame action tick.
     fn tick_action(&mut self, assets: &FightAssets, i: usize, opp: usize) {
-        // Mode-4 hook (projectiles) is not ported: no-op.
+        // Mode-4 hook (0x10D57): per-character tick; may spawn a fireball.
+        let char = (self.objects[i].char2 / 2) as usize;
+        let obj = self.objects[i];
+        let facing_right = obj.facing & 4 != 0;
+        let mut sounds = std::mem::take(&mut self.sound_events);
+        let spawn = {
+            let mut latches = self.latches;
+            let result = chars::tick_hook(
+                char,
+                obj.action,
+                obj.sub_action,
+                obj.flags38,
+                self.players[i].b1f,
+                obj.frame,
+                facing_right,
+                obj.x,
+                self.players[i].y,
+                obj.palette,
+                &mut latches,
+                &mut sounds,
+            );
+            self.latches = latches;
+            result
+        };
+        self.sound_events = sounds;
+        if let Some(req) = spawn {
+            self.spawn_projectile(assets, i, req);
+        }
         // 0x10D5E: frm header flags low bits copy into both flag words.
         let char = (self.objects[i].char2 / 2) as usize;
         let script_id = (self.objects[i].hotspot / 4) as usize;
@@ -721,8 +804,8 @@ impl FightState {
         } else {
             self.idle_step(assets, i, opp);
         }
-        // Common tail 0x11034: hit application when a mark landed.
-        self.hit_tail(i, opp);
+        // Common tail 0x11034: end-of-script handling, throw release, timers.
+        self.hit_tail(assets, i, opp);
     }
 
     /// The movement/physics path for an active action (0x10D85..0x11034,
@@ -798,10 +881,91 @@ impl FightState {
         self.players[i].y = self.players[i].y.wrapping_add(dy);
     }
 
-    /// 0x11034 tail: when the script looped (`flags38 & 0x10` and no pending
-    /// steps) and the opponent is in a throw reaction, apply the throw damage.
-    fn hit_tail(&mut self, i: usize, opp: usize) {
-        let _ = (i, opp);
+    /// `0x11034` tail: script-end unlock, opponent throw release, and the
+    /// mode-6 / AI-timer refresh (`0x11080`..`0x110C9`).
+    fn hit_tail(&mut self, assets: &FightAssets, i: usize, opp: usize) {
+        if self.objects[i].flags38 & 0x10 == 0 || self.objects[i].w2e != 0 {
+            return;
+        }
+        self.objects[i].flags38 &= !0x04;
+        if self.players[i].flags_b & 0x0100 != 0 {
+            self.players[i].b1a = 0;
+            self.players[i].b1b = 0;
+        }
+        // 0x1105B: opponent grab/throw release.
+        if self.players[opp].flags_b & 0x0080 != 0 {
+            if self.players[opp].flags_b & 0x0400 != 0 {
+                let char = (self.objects[i].char2 / 2) as usize;
+                let table = assets.ait[char]
+                    .power_table()
+                    .map(|t| t.to_vec())
+                    .unwrap_or_default();
+                let reaction = self.players[opp].reaction_anim;
+                let _ = hit::apply_reaction_damage(
+                    &mut self.players[opp],
+                    self.objects[opp].char2,
+                    reaction,
+                    &table,
+                    None,
+                    false,
+                );
+            }
+            self.players[opp].flags_b &= !0x0400;
+            self.players[opp].flags_b &= !0x0004;
+            if self.players[opp].flags_b & 0x0020 != 0 {
+                self.force_script(opp, 0x0D);
+            }
+        }
+        // 0x110AD: hit-stop adds into the AI timer, else refresh from the table.
+        if self.players[i].b21 != 0 {
+            self.players[i].ai_timer =
+                self.players[i].ai_timer.saturating_add(self.players[i].b21);
+            self.players[i].b21 = 0;
+        } else if self.objects[i].action != 0x3A {
+            let char = (self.objects[i].char2 / 2) as usize;
+            let action = self.objects[i].action as usize;
+            let scaled = assets.ait[char]
+                .power_table()
+                .and_then(|t| t.get(action))
+                .copied()
+                .unwrap_or(0)
+                / 6;
+            self.players[i].ai_timer = scaled;
+        }
+    }
+
+    /// Spawn a fireball (`0x169F8`..`0x16A71`).
+    fn spawn_projectile(&mut self, assets: &FightAssets, owner: usize, req: chars::SpawnRequest) {
+        if self.projectiles.len() >= 8 {
+            return;
+        }
+        let (w, h) = assets
+            .fireball
+            .first()
+            .map(|f| (f.width, f.height))
+            .unwrap_or((0, 0));
+        self.objects[owner].flags38 |= 0x40;
+        self.projectiles.push(Projectile {
+            x: req.x,
+            y: req.y,
+            x_speed: req.x_speed,
+            action: req.action,
+            owner,
+            flicker: 0,
+            width: w,
+            height: h,
+        });
+        // 0x16A71: movement lockout from the frame-rate scalar.
+        self.players[owner].b1f = 4 * 4;
+    }
+
+    /// `0x16A87` — projectile tick: move, bounds-check, flicker.
+    fn tick_projectiles(&mut self) {
+        for p in &mut self.projectiles {
+            p.x = p.x.wrapping_add(p.x_speed);
+            p.flicker ^= 2;
+        }
+        self.projectiles.retain(|p| p.x > -0x30 && p.x < 0x150);
     }
 
     /// `0x112B0` — step bounds. Returns `(finished, cx, dy)`.
@@ -1015,6 +1179,30 @@ impl FightState {
                 break;
             }
         }
+        // Projectile hits (`0x123EA`/`0x12442`).
+        for idx in 0..self.projectiles.len() {
+            let proj = self.projectiles[idx];
+            let def = 1 - proj.owner;
+            if self.players[def].flags_b & 0x0004 != 0 {
+                continue;
+            }
+            let left = proj.x.wrapping_sub(proj.width as i16 / 2);
+            let top = proj.y.wrapping_sub(proj.height as i16 / 2);
+            let pbox = crate::fight::ani::HitBox {
+                kind: 1,
+                left,
+                top,
+                right: left.wrapping_add(proj.width as i16),
+                bottom: top.wrapping_add(proj.height as i16),
+            };
+            if hit::overlap(&pbox, &boxes[def], 5) {
+                self.players[def].flags_a |= hit::WAS_HIT | 0x4000;
+                self.players[def].reaction_anim = proj.action;
+                self.projectiles[idx].owner = usize::MAX; // mark for removal
+                break;
+            }
+        }
+        self.projectiles.retain(|p| p.owner != usize::MAX);
     }
 
     fn build_boxes(

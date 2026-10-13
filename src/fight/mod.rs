@@ -13,6 +13,7 @@
 
 pub mod ait;
 pub mod brain;
+pub mod chars;
 pub mod ani;
 pub mod fighter;
 pub mod frm;

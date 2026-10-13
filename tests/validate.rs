@@ -323,6 +323,50 @@ fn brain_runs_on_real_tables() {
 }
 
 #[test]
+fn fireball_spawns_and_hits_with_real_tables() {
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    // RYU as P1 (engine index 3), KEN as P2; RYU faces right and fires.
+    let mut st = FightState::new(3, 0, 0);
+    st.prime(&assets);
+    // Let the stand script finish so the animation lock (obj[0x38] bit 2)
+    // clears, exactly as the engine requires before a new action can start.
+    for _ in 0..90 {
+        st.run_frame(&assets, [0, 0], [false, false]);
+    }
+    // Move the opponent to the far wall so the fireball has flight time
+    // (a fireball can legitimately trade with an opponent's reach box).
+    st.players[1].x = 0x110;
+    st.debug_action = Some((0, 0x35));
+    let mut spawned = false;
+    for _ in 0..300 {
+        st.run_frame(&assets, [0, 0], [false, true]);
+        if !st.projectiles.is_empty() {
+            spawned = true;
+            break;
+        }
+    }
+    st.debug_action = None;
+    assert!(spawned, "fireball must spawn during action 0x35");
+    let proj = st.projectiles[0];
+    assert_eq!(proj.owner, 0);
+    assert_eq!(proj.x_speed, 0x1E, "facing right");
+    assert_eq!(proj.action, 0x35);
+    // Let it fly into KEN: he gets the was-hit bit (reaction next frame),
+    // then the real RYU power[0x35] = 8 -> ((8*2*217)>>8)>>1 = 6 damage.
+    let before = st.players[1].energy;
+    for _ in 0..60 {
+        st.run_frame(&assets, [0, 0], [false, false]);
+    }
+    assert!(st.players[1].energy < before, "fireball must damage KEN");
+    assert!(st.projectiles.is_empty(), "fireball removed after the hit");
+}
+
+#[test]
 fn stages_assemble_with_expected_slices() {
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");

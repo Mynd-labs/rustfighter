@@ -44,6 +44,7 @@ fn main() {
     let mut stage_key: Option<String> = None;
     let mut shot: Option<PathBuf> = None;
     let mut frames: u32 = 90;
+    let mut fireball_at: Option<u32> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -54,6 +55,7 @@ fn main() {
             "--stage" => stage_key = args.next(),
             "--shot" => shot = args.next().map(PathBuf::from),
             "--frames" => frames = args.next().and_then(|s| s.parse().ok()).unwrap_or(90),
+            "--fireball-at" => fireball_at = args.next().and_then(|s| s.parse().ok()),
             "-h" | "--help" => usage(),
             "--version" => {
                 println!("rustfighter {}", env!("CARGO_PKG_VERSION"));
@@ -91,7 +93,6 @@ fn main() {
         stage_w: 0,
         input: InputConfig::from_game_dir(&game),
         keys: InputState::default(),
-        debug_action: None,
         banner: None,
         banner_timer: 0,
         hitbox_overlay: false,
@@ -108,8 +109,24 @@ fn main() {
 
     if let Some(dir) = shot {
         std::fs::create_dir_all(&dir).expect("shot dir");
-        for _ in 0..frames {
+        for f in 0..frames {
+            if fireball_at == Some(f) {
+                game_state.fights.debug_action = Some((0, 0x35));
+            }
+            if fireball_at.map(|at| f > at && f <= at + 10) == Some(true) {
+                game_state.fights.debug_action = Some((0, 0x35));
+            }
+            if fireball_at.map(|at| f > at + 10) == Some(true) {
+                game_state.fights.debug_action = None;
+            }
             game_state.step_frame([0u8; 2], [false, true]);
+        }
+        if fireball_at.is_some() {
+            println!(
+                "projectiles: {} sounds: {:?}",
+                game_state.fights.projectiles.len(),
+                game_state.fights.sound_events
+            );
         }
         // Debug: state + sprite resolution for both fighters.
         for i in 0..2 {
@@ -197,11 +214,15 @@ fn main() {
         if game_state.keys.just_pressed(0, Button::Kick) {
             raw |= 0x20;
         }
-        // Debug attack keys 1..4.
-        game_state.debug_action = None;
+        // Debug attack keys 1..4 (override the chooser for P1).
+        game_state.fights.debug_action = None;
         for (i, key) in [Key::Key1, Key::Key2, Key::Key3, Key::Key4].iter().enumerate() {
             if window.is_key_pressed(*key, minifb::KeyRepeat::No) {
-                game_state.debug_action = Some(0x34 + i as u8);
+                game_state.fights.debug_action = Some((0, 0x34 + i as u8));
+            }
+            if window.is_key_down(*key) {
+                // hold to chain the action's commits
+                game_state.fights.debug_action = Some((0, 0x34 + i as u8));
             }
         }
         if window.is_key_pressed(Key::R, minifb::KeyRepeat::No) {
@@ -246,7 +267,6 @@ struct Game {
     stage_w: i32,
     input: InputConfig,
     keys: InputState,
-    debug_action: Option<u8>,
     banner: Option<String>,
     banner_timer: u32,
     hitbox_overlay: bool,
@@ -275,9 +295,6 @@ impl Game {
 
     /// One game frame: brain for both fighters, then round bookkeeping.
     fn step_frame(&mut self, inputs: [u8; 2], ai: [bool; 2]) {
-        if let Some(action) = self.debug_action {
-            self.fights.force_action(&self.assets, 0, action);
-        }
         self.fights.run_frame(&self.assets, inputs, ai);
         if self.banner.is_none() {
             let energies = [self.fights.players[0].energy, self.fights.players[1].energy];
@@ -374,6 +391,16 @@ impl Game {
                     }
                 }
                 let _ = flipped;
+            }
+        }
+        // Projectiles (fireball flicker pair).
+        for p in &self.fights.projectiles {
+            let sprite = self.assets.fireball.get((p.flicker / 2) as usize & 1);
+            if let Some(sprite) = sprite {
+                let base = if p.owner == 0 { PALETTE_BASE_P1 } else { PALETTE_BASE_P2 };
+                let x = p.x as i32 - sprite.width as i32 / 2;
+                let y = p.y as i32 - sprite.height as i32 / 2;
+                rustfighter::fight::render::draw_layer(&mut canvas, sprite, x, y, base);
             }
         }
         self.draw_hud(&mut canvas);
