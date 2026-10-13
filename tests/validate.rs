@@ -111,27 +111,24 @@ fn sound_assets_decode() {
 }
 
 #[test]
-fn ani_tables_parse_and_handles_resolve() {
+fn character_tables_parse_and_chain_resolves() {
+    use rustfighter::fight::ait::AitTable;
     use rustfighter::fight::ani::{build_hitboxes, AniTable};
-    use rustfighter::gamedata::GameData;
+    use rustfighter::fight::frm::FrmTable;
     let Some(gd) = data() else {
         eprintln!("skip: game data not found");
         return;
     };
-    let mut parsed = 0;
+
+    // ani: 12 tables x 200 frames; every layer handle resolves to a record.
+    let mut seen = 0;
     for rec in gd.index.find_prefix("ani") {
         let name = rec.trimmed_name().to_string();
-        let bytes = gd.decoded(&name).expect("ani decodes");
-        let table = AniTable::parse(&name, &bytes).expect("ani parses");
+        let table = AniTable::parse(&name, &gd.decoded(&name).unwrap()).expect("ani parses");
         assert_eq!(table.frames.len(), 200, "{name} frame count");
-        // Every sprite handle in every frame must resolve to a real record.
         for (fi, frame) in table.frames.iter().enumerate() {
-            for &(handle, _off) in &frame.sprites {
-                if handle == 0xFFF8 || handle == 0xF33A {
-                    continue;
-                }
-                // Handles are only valid while loaded; 0 means absent in some frames.
-                if handle == 0 {
+            for handle in [frame.t_handle, frame.b_handle] {
+                if handle == 0xF33A || handle == 0 {
                     continue;
                 }
                 assert!(
@@ -140,29 +137,71 @@ fn ani_tables_parse_and_handles_resolve() {
                 );
             }
         }
-        parsed += 1;
+        seen += 1;
     }
-    assert_eq!(parsed, 12, "12 character ani tables");
+    assert_eq!(seen, 12, "12 character ani tables");
 
-    // Spot check: KEN frame 0 sprites are KENN sprite records.
-    let ken = AniTable::parse("aniKEN", &gd.decoded("aniKEN").unwrap()).unwrap();
-    let f0 = ken.frame(0).unwrap();
-    let names: Vec<String> = f0
-        .sprites
-        .iter()
-        .filter(|(h, _)| *h != 0xFFF8 && *h != 0xF33A && *h != 0)
-        .filter_map(|(h, _)| gd.record_for_handle(*h))
-        .map(|r| r.trimmed_name().to_string())
-        .collect();
-    assert!(
-        names.iter().any(|n| n.starts_with("sprKENN")),
-        "frame 0 sprites should include a KENN bank: {names:?}"
-    );
+    // frm: 12 tables x 64 scripts; every list terminates with valid ani indices.
+    let mut seen = 0;
+    for rec in gd.index.find_prefix("frm") {
+        let name = rec.trimmed_name().to_string();
+        let bytes = gd.decoded(&name).unwrap();
+        let table = FrmTable::parse(&name, &bytes).expect("frm parses");
+        assert_eq!(table.scripts.len(), 64, "{name} script count");
+        for script_id in 0..64 {
+            let (frames, terminated) = table.frame_list(script_id);
+            assert!(terminated, "{name} script {script_id} list unterminated");
+            assert!(!frames.is_empty(), "{name} script {script_id} empty list");
+            for f in &frames {
+                assert!(
+                    f.ani_index < 200,
+                    "{name} script {script_id}: ani index {}",
+                    f.ani_index
+                );
+            }
+        }
+        seen += 1;
+    }
+    assert_eq!(seen, 12, "12 character frm tables");
 
-    // Hitbox construction runs for all frames.
+    // ait: 12 tables; the action map section always starts at offset 22.
+    let mut seen = 0;
+    for rec in gd.index.find_prefix("ait") {
+        let name = rec.trimmed_name().to_string();
+        let table = AitTable::parse(&name, &gd.decoded(&name).unwrap()).expect("ait parses");
+        assert_eq!(table.header[1], 22, "{name} action-map base");
+        seen += 1;
+    }
+    assert_eq!(seen, 12, "12 character ait tables");
+
+    // End-to-end KEN worked example: action 0x0B -> script 36 -> frames
+    // 111..113 -> ani[111] = sprKENNT112 / sprKENNB112.
+    let ait = AitTable::parse("aitKEN", &gd.decoded("aitKEN").unwrap()).unwrap();
+    let (script, _param) = ait.script_for_action(0x0B).expect("action 0x0B maps");
+    assert_eq!(script, 36);
+    let frm = FrmTable::parse("frmKEN", &gd.decoded("frmKEN").unwrap()).unwrap();
+    let (frames, terminated) = frm.frame_list(script as usize);
+    assert!(terminated);
+    let indices: Vec<u8> = frames.iter().map(|f| f.ani_index).collect();
+    assert_eq!(&indices[..4], &[111, 112, 113, 113], "KEN script 36 frames");
+    let ani = AniTable::parse("aniKEN", &gd.decoded("aniKEN").unwrap()).unwrap();
+    let f111 = ani.frame(111).unwrap();
+    let t = gd
+        .record_for_handle(f111.t_handle)
+        .unwrap()
+        .trimmed_name()
+        .to_string();
+    let b = gd
+        .record_for_handle(f111.b_handle)
+        .unwrap()
+        .trimmed_name()
+        .to_string();
+    assert_eq!(t, "sprKENNT112");
+    assert_eq!(b, "sprKENNB112");
+
+    // Hitboxes build on every KEN frame with sane geometry.
     for fi in 0..200 {
-        let frame = ken.frame(fi).unwrap();
-        let boxes = build_hitboxes(frame, 100, 200, false);
+        let boxes = build_hitboxes(ani.frame(fi).unwrap(), 100, 200, false);
         for (i, b) in boxes.iter().enumerate() {
             if let Some(b) = b {
                 assert!(b.right > b.left, "frame {fi} box {i} geometry");

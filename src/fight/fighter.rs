@@ -126,7 +126,7 @@ pub struct DrawObject {
     pub x: i16,
     /// `+0x02` Y.
     pub y: i16,
-    /// `+0x04` current sprite handle (asset handle; `0xFFF8` = none, `0xF33A` = no change).
+    /// `+0x04` current sprite handle (asset handle; `0xF33A` = blank sprite).
     pub sprite: u16,
     /// `+0x06` linked driver object (slot index).
     pub parent: u16,
@@ -204,7 +204,7 @@ impl DrawObject {
         DrawObject {
             x,
             y,
-            sprite: SPRITE_NONE,
+            sprite: SPRITE_BLANK,
             parent: 0,
             rel_x: 0,
             rel_y: 0,
@@ -275,10 +275,9 @@ impl DrawObject {
     }
 }
 
-/// Sprite handle sentinels (same values as in [`crate::fight::ani`]).
-pub const SPRITE_NONE: u16 = crate::fight::ani::SPRITE_NONE;
-/// @see [`SPRITE_NONE`]
-pub const SPRITE_NO_CHANGE: u16 = crate::fight::ani::SPRITE_NO_CHANGE;
+/// Sprite handle sentinel meaning "draw nothing" (`sprBLANKSPR`, same value as
+/// in [`crate::fight::ani`] records).
+pub const SPRITE_BLANK: u16 = crate::fight::ani::SPRITE_BLANK;
 
 #[cfg(test)]
 mod tests {
