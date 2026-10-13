@@ -72,21 +72,115 @@ pub struct GameData {
     decoded: RefCell<HashMap<usize, Rc<Vec<u8>>>>,
 }
 
-/// Locate the game directory: `SF2_DIR` env var, then `./street-fighter-ii`,
-/// then the analysis workspace path.
+/// Locate the game directory.
+///
+/// Order: `SF2_DIR` environment variable, the directory remembered in
+/// `~/.config/rustfighter/config`, the working directory, the executable's
+/// directory (and a `street-fighter-ii`/`game` subdirectory), then shallow
+/// scans of `~/Downloads`, `~/Desktop` and `~/Games`.
 pub fn find_game_dir() -> Option<PathBuf> {
-    let candidates: Vec<PathBuf> = std::env::var("SF2_DIR")
-        .ok()
-        .into_iter()
-        .chain([
-            "street-fighter-ii".to_string(),
-            "/tmp/opencode/rea/game/street-fighter-ii".to_string(),
-        ])
-        .map(PathBuf::from)
-        .collect();
-    candidates
-        .into_iter()
-        .find(|p| p.join("INDEX.SF2").is_file())
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("SF2_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+    if let Some(dir) = saved_game_dir() {
+        candidates.push(dir);
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.clone());
+        candidates.push(cwd.join("street-fighter-ii"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.to_path_buf());
+            candidates.push(dir.join("street-fighter-ii"));
+            candidates.push(dir.join("game"));
+        }
+    }
+    for c in &candidates {
+        if is_game_dir(c) {
+            return Some(c.clone());
+        }
+    }
+    // Shallow scan of common download locations.
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for root in ["Downloads", "Desktop", "Games"] {
+            let root = home.join(root);
+            if root.is_dir() {
+                if let Some(found) = scan_for_game(&root, 3) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// True when `dir` contains the game's asset directory file.
+pub fn is_game_dir(dir: &Path) -> bool {
+    dir.join("INDEX.SF2").is_file()
+        || std::fs::read_dir(dir)
+            .map(|mut entries| {
+                entries.any(|e| {
+                    e.map(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("INDEX.SF2"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+}
+
+fn config_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/rustfighter/config"))
+}
+
+/// The remembered game directory, if it still exists.
+pub fn saved_game_dir() -> Option<PathBuf> {
+    let path = config_path()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("game_dir=") {
+            let dir = PathBuf::from(value.trim());
+            if is_game_dir(&dir) {
+                return Some(dir);
+            }
+        }
+    }
+    None
+}
+
+/// Remember a usable game directory for future launches.
+pub fn save_game_dir(dir: &Path) {
+    let Some(path) = config_path() else { return };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, format!("game_dir={}\n", dir.display()));
+}
+
+/// Breadth-first search for a directory containing `INDEX.SF2`.
+fn scan_for_game(root: &Path, max_depth: usize) -> Option<PathBuf> {
+    let mut queue = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = queue.pop() {
+        if is_game_dir(&dir) {
+            return Some(dir);
+        }
+        if depth >= max_depth {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                queue.push((entry.path(), depth + 1));
+            }
+        }
+    }
+    None
 }
 
 /// Read a file by name, matching case-insensitively (the DOS original used a

@@ -49,16 +49,36 @@ fn main() {
                 println!("usage: rfplay [--game DIR] [--scale N] [--shot DIR]");
                 return;
             }
+            "--version" | "-V" => {
+                println!("rustfighter {}", env!("CARGO_PKG_VERSION"));
+                return;
+            }
             other => {
                 eprintln!("unknown argument: {other}");
                 return;
             }
         }
     }
-    let game = game.or_else(find_game_dir).unwrap_or_else(|| {
-        eprintln!("game directory not found; pass --game or set SF2_DIR");
+    let game = match game {
+        Some(dir) => dir,
+        None => find_game_dir()
+            .or_else(pick_game_folder)
+            .unwrap_or_else(|| {
+                eprintln!("Street Fighter II game files not found.");
+                eprintln!("Put the original game files in a folder, pass --game <DIR>,");
+                eprintln!("set SF2_DIR, or choose the folder in the dialog when it appears.");
+                std::process::exit(1);
+            }),
+    };
+    if !rustfighter::gamedata::is_game_dir(&game) {
+        eprintln!(
+            "{} does not look like the game folder (INDEX.SF2 not found).",
+            game.display()
+        );
         std::process::exit(1);
-    });
+    }
+    // Remember this folder for next time.
+    rustfighter::gamedata::save_game_dir(&game);
     let gd = GameData::load(&game).unwrap_or_else(|e| {
         eprintln!("failed to load game data: {e}");
         std::process::exit(1);
@@ -506,4 +526,55 @@ fn big_glyph_grid(canvas: &mut Canvas, font: &rustfighter::font::GlyphFont, x0: 
             cy += font.height as i32 + 2;
         }
     }
+}
+
+/// Ask the desktop for the game folder (zenity on GNOME, kdialog on KDE).
+/// Returns `None` when no dialog tool is available or the choice is invalid.
+fn pick_game_folder() -> Option<PathBuf> {
+    let attempts: [(&str, [&str; 3]); 2] = [
+        (
+            "zenity",
+            [
+                "--file-selection",
+                "--directory",
+                "--title=Select the Street Fighter II game folder",
+            ],
+        ),
+        (
+            "kdialog",
+            [
+                "--getexistingdirectory",
+                ".",
+                "Select the Street Fighter II game folder",
+            ],
+        ),
+    ];
+    for (bin, args) in attempts {
+        let mut chosen: Option<PathBuf> = None;
+        for _ in 0..2 {
+            let Ok(output) = std::process::Command::new(bin).args(args).output() else {
+                break;
+            };
+            if !output.status.success() {
+                break; // cancelled or unavailable
+            }
+            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
+            if rustfighter::gamedata::is_game_dir(&path) {
+                chosen = Some(path);
+                break;
+            }
+        }
+        if let Some(path) = chosen {
+            return Some(path);
+        }
+        // kdialog needs a display too; fall through to it only if zenity ran.
+        if std::process::Command::new(bin)
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            continue;
+        }
+    }
+    None
 }

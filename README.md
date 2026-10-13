@@ -4,6 +4,28 @@ Native Rust reimplementation of the MS-DOS release of **Street Fighter II**
 (U.S. Gold / Creative Materials, 1995) — asset pipeline, renderer and players,
 with the original game files as input.
 
+## Install (double-click friendly)
+
+**Ubuntu / Debian — `.deb` (recommended):** download
+`rustfighter_<version>_amd64.deb` from
+[Releases](https://github.com/Mynd-labs/rustfighter/releases), double-click it
+to install, then launch **Rustfighter** from your applications menu.
+
+**Any Linux — AppImage:** download `rustfighter-<version>-x86_64.AppImage`,
+make it executable (`chmod +x` or right-click → Properties → *Allow executing
+file as a program*), and double-click it. On Ubuntu 24.04 you may first need
+`sudo apt install libfuse2t64`.
+
+**Tarball:** unpack and run `./rfplay` — nothing to install.
+
+On first start the app looks for the original game files automatically
+(working directory, next to the executable, `~/Downloads`, `~/Desktop`,
+`~/Games`); if it cannot find them it opens a folder picker to select the
+folder containing `INDEX.SF2`. The chosen folder is remembered in
+`~/.config/rustfighter/config`.
+
+> The original game data files are **not** distributed with this project.
+
 ## What works today
 
 | Component | Status |
