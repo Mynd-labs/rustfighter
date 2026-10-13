@@ -1,0 +1,122 @@
+//! Input/AI data tables extracted from the shipped binary.
+//!
+//! All offsets are `DS`-relative as in the disassembly; the values are byte
+//! copies from `SF2.EXE` (see `docs/port/action-execution.md` §4 for how each
+//! one is read).
+
+/// `DS:0x2FDF` — input nibble → action class for the human decoder (`0x1075A`).
+pub const INPUT_CLASS: [u8; 16] = [
+    0xFF, 0x00, 0x01, 0x08, 0x02, 0x03, 0x04, 0x08, 0x05, 0x06, 0x07, 0x08, 0x08, 0x08, 0x08, 0x08,
+];
+
+/// `DS:0x254` — input class remap used by the special/attack path (`0x107D9`).
+pub const INPUT_REMAP: [u8; 16] = [
+    0x00, 0x01, 0x02, 0x00, 0x08, 0x09, 0x0A, 0x00, 0x04, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// `DS:0x23C` — per-input-class / per-state action table (`0x107B9`).
+/// Indexed `class + 8 * (player[0x0A] & 3)`; 24 stored entries.
+pub const INPUT_ACTION: [u8; 24] = [
+    0x45, 0x48, 0x45, 0x45, 0x48, 0x45, 0x45, 0x48, 0x42, 0x46, 0x40, 0x43, 0x46, 0x41, 0x44, 0x46,
+    0x42, 0x47, 0x47, 0x43, 0x47, 0x47, 0x44, 0x47,
+];
+
+/// `DS:0x2C6` — jump X speed per character (`0x10CBD`).
+pub const JUMP_SPEED: [u16; 12] = [0x0C; 12];
+
+/// `DS:0x3C59` — dizzy timer thresholds per character (`0x17737`).
+/// Only the first 8 entries are non-zero in the shipped data; the remainder
+/// overlaps other globals (kept verbatim).
+pub const DIZZY_THRESHOLD: [u8; 16] = [
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x28, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00,
+];
+
+/// `DS:0x3C64` — throw permission table: `char * 4 + (action - 0x2C)`
+/// (`0x17ACC`). 12 characters × 4 throw actions.
+pub const THROW_ALLOW: [u8; 48] = [
+    0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// `DS:0x3432` — CPU interrupt probability words, indexed by the player's
+/// state byte `player[0x1C]` (`0x1073A`): the CPU throws when
+/// `rand() & 0x7FFF >= word`.
+pub const CPU_PROB: [u16; 8] = [
+    0x198C, 0x1CBD, 0x1FEF, 0x2320, 0x2652, 0x2983, 0x2CB5, 0x2FE6,
+];
+
+/// `DS:0x0078` — per-character 8-byte motion patterns consumed by the special
+/// move recogniser (`0x14E1B`, **not yet decoded** — data retained for a later
+/// porting pass).
+pub const MOTION_PATTERNS: [[u8; 8]; 12] = [
+    [0xB8, 0x00, 0x70, 0x01, 0x0C, 0x02, 0x24, 0x02], // KEN
+    [0xCC, 0x00, 0x84, 0x01, 0x20, 0x02, 0x38, 0x02], // GUILE
+    [0xDC, 0x00, 0x94, 0x01, 0x20, 0x02, 0x38, 0x02], // E-HONDA
+    [0xB8, 0x00, 0x70, 0x01, 0x0C, 0x02, 0x24, 0x02], // RYU
+    [0xEC, 0x00, 0xBC, 0x01, 0x20, 0x02, 0x38, 0x02], // ZANGIEF
+    [0x04, 0x01, 0xD4, 0x01, 0x20, 0x02, 0x38, 0x02], // CHUN LI
+    [0x30, 0x01, 0xE8, 0x01, 0x20, 0x02, 0x38, 0x02], // DHALSIM
+    [0x48, 0x01, 0xFC, 0x01, 0x20, 0x02, 0x38, 0x02], // BLANKA
+    [0x00, 0x00, 0x1A, 0x02, 0x02, 0x00, 0x1A, 0x02], // BALROG
+    [0x06, 0x00, 0x1A, 0x02, 0x04, 0x00, 0x1A, 0x02], // VEGA
+    [0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x01], // SAGAT
+    [0x02, 0x00, 0x1A, 0x02, 0x01, 0x00, 0x1A, 0x02], // M. BISON
+];
+
+/// `DS:0x3CC4` — dead comparison table (values 4/5/6 can never equal the
+/// reaction ids 0x34..0x37); retained verbatim for fidelity.
+pub const DEAD_REACTION: [u8; 12] = [6, 4, 5, 6, 4, 4, 4, 6, 0xFF, 0xFF, 0xFF, 0xFF];
+
+/// Probability threshold for the CPU throw decision at `0x1073A` for a given
+/// state (`(rand & 0x7FFF) >= threshold` ⇒ throw).
+pub fn cpu_throw_threshold(state: u8) -> u16 {
+    CPU_PROB[(state as usize) & 7]
+}
+
+/// Input class for an input byte's low nibble (`0x10763`).
+pub fn input_class(nibble: u8) -> u8 {
+    INPUT_CLASS[(nibble & 0x0F) as usize]
+}
+
+/// Per-input action from the class table (`0x107B9`).
+pub fn input_action(class: u8, player_state: u8) -> Option<u8> {
+    let index = class as usize + 8 * (player_state as usize & 3);
+    INPUT_ACTION.get(index).copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_tables_pin_real_values() {
+        assert_eq!(input_class(0x00), 0xFF);
+        assert_eq!(input_class(0x03), 0x08); // diagonal -> class 8
+        assert_eq!(input_class(0x01), 0x00);
+        // Stand/no-input classes resolve through the per-state table.
+        assert_eq!(input_action(0, 0), Some(0x45));
+        assert_eq!(input_action(7, 2), Some(0x47));
+        assert_eq!(input_action(6, 2), Some(0x44));
+        // The stored array is 24 bytes; classes are 0..=8 in practice, so
+        // high indices with state 3 fall off the end (the original reads into
+        // the neighbouring remap table; the port clamps instead).
+        assert_eq!(input_action(15, 0), Some(0x46));
+        assert_eq!(input_action(15, 3), None);
+    }
+
+    #[test]
+    fn cpu_thresholds_and_throw_table() {
+        assert_eq!(cpu_throw_threshold(0), 0x198C);
+        assert_eq!(cpu_throw_threshold(7), 0x2FE6);
+        assert_eq!(cpu_throw_threshold(8), 0x198C); // wraps (state & 7)
+        assert_eq!(THROW_ALLOW[0], 1);
+        assert_eq!(THROW_ALLOW[10 * 4], 1);
+        assert_eq!(THROW_ALLOW[38], 0); // M.BISON: throw 2 not allowed
+    }
+
+    #[test]
+    fn jump_speeds_are_uniform_in_shipped_data() {
+        assert!(JUMP_SPEED.iter().all(|&s| s == 0x0C));
+    }
+}

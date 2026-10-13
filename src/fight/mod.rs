@@ -17,7 +17,9 @@ pub mod fighter;
 pub mod frm;
 pub mod hit;
 pub mod render;
+pub mod rng;
 pub mod round;
+pub mod tables;
 
 /// Action→sound table `DS:0x1638` (64 bytes): SFX id played for the attacker's
 /// action when a hit connects (`0xFF` = silent). Extracted from the binary.
