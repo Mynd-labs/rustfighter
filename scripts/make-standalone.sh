@@ -21,13 +21,15 @@ fi
 
 SF2_DIR="$game" cargo build --release --features embedded,audio --target-dir target/standalone
 
-cp target/standalone/release/rfplay "$out"
+cp target/standalone/release/rfight "$out"
+cp target/standalone/release/rfplay "${out}-browser"
 cp target/standalone/release/rfdump "${out}-rfdump"
-chmod +x "$out" "${out}-rfdump"
+chmod +x "$out" "${out}-browser" "${out}-rfdump"
 
 echo
 echo "Single-file build ready:"
-echo "  $out          ($(du -h "$out" | cut -f1)) — double-click to play"
+echo "  $out          ($(du -h "$out" | cut -f1)) — the game: double-click to play"
+echo "  ${out}-browser ($(du -h "${out}-browser" | cut -f1)) — asset browser"
 echo "  ${out}-rfdump ($(du -h "${out}-rfdump" | cut -f1)) — headless decoder"
 echo "No game files are needed; the data is inside the binary."
 echo "NOTE: personal use only — do not redistribute this binary."

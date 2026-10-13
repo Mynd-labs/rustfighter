@@ -70,14 +70,16 @@ fn main() {
             }
         }
     }
-    let game = game.or_else(find_game_dir).unwrap_or_else(|| {
-        eprintln!("game files not found; pass --game or set SF2_DIR");
-        std::process::exit(1);
-    });
-    let gd = GameData::load(&game).unwrap_or_else(|e| {
-        eprintln!("failed to load game data: {e}");
-        std::process::exit(1);
-    });
+    let gd = match game.or_else(find_game_dir) {
+        Some(dir) => GameData::load(&dir).unwrap_or_else(|e| {
+            eprintln!("failed to load game data from {}: {e}", dir.display());
+            std::process::exit(1);
+        }),
+        None => GameData::load_embedded().unwrap_or_else(|_| {
+            eprintln!("game files not found; pass --game, set SF2_DIR, or use a standalone build");
+            std::process::exit(1);
+        }),
+    };
     let assets = FightAssets::load(&gd).unwrap_or_else(|e| {
         eprintln!("failed to load fight tables: {e}");
         std::process::exit(1);
@@ -86,6 +88,7 @@ fn main() {
     let p2_index = ENGINE_TABLE_STEMS.iter().position(|&s| s == p2).unwrap_or(3);
     let audio = AudioOut::new();
     let sound_bank = SoundBank::load(&gd).ok();
+    let input_config = InputConfig::from_game_dir(&gd.dir);
     let stage_keys = gd.stage_keys();
     let stage_key = stage_key.unwrap_or_else(|| stage_keys.first().cloned().unwrap_or_default());
 
@@ -102,7 +105,7 @@ fn main() {
         stage_key,
         stage: None,
         stage_w: 0,
-        input: InputConfig::from_game_dir(&game),
+        input: input_config,
         keys: InputState::default(),
         banner: None,
         banner_timer: 0,
