@@ -275,8 +275,12 @@ fn main() {
         }
         match game_state.phase {
             Phase::Title => {
+                // Accept the configured attack buttons *and* raw Enter/Space,
+                // so a remapped CONFIG cannot trap the player on the title.
                 if game_state.keys.just_pressed(0, Button::Punch)
                     || game_state.keys.just_pressed(0, Button::Kick)
+                    || window.is_key_pressed(Key::Enter, minifb::KeyRepeat::No)
+                    || window.is_key_pressed(Key::Space, minifb::KeyRepeat::No)
                 {
                     game_state.phase = Phase::SelectScreen;
                     game_state.load_select_assets();
