@@ -858,10 +858,14 @@ impl FightState {
                     0x43 => -sp,
                     _ => sp,
                 };
-                obj.sub_action = if obj.action == 0x42 { 0 } else { 0x1C };
-                obj.mode = if obj.action == 0x42 { 4 } else { 0xFC };
+                // The jump arc lives in the frame `dy` series, so the jump
+                // walks its slot list from the first frame sequentially like
+                // the walk (`0x10AB1`); the accumulator path (mode/speed
+                // scale) and the engine's 0x1C pre-set both scramble it.
+                obj.sub_action = 0;
+                obj.mode = 0;
                 obj.pos_acc = 0;
-                obj.speed_scale = (obj.x_speed as i32 * 8) as u16;
+                obj.speed_scale = 0;
             }
             0x18..=0x27 => {
                 obj.sub_action = 0;
@@ -927,16 +931,16 @@ impl FightState {
     /// The movement/physics path for an active action (0x10D85..0x11034,
     /// condensed to the documented core).
     fn action_active_step(&mut self, assets: &FightAssets, i: usize, opp: usize) {
-        // 0x10D85: advance the animation frame. The movement of an active
-        // action is the frame's own `(dx, dy)` pair (`0x10AB1`): walk frames
-        // step 4 px, dash frames 10 px, and the jump arc is literally the `dy`
-        // sequence of its frames. The `dx` sign follows the facing (`0x10E4F`).
-        let (_, (fdx, fdy)) = self.advance_frame(assets, i);
-        // 0x10D8B: accumulator.
-        self.objects[i].pos_acc = self.objects[i].pos_acc.wrapping_add(FRAME_ACC_STEP);
+        // 0x10D85: the frame index of an active action comes either from the
+        // frame accumulator (`0x10B7F`, when the action has a mode/speed
+        // scale: jumps and scripted moves) or by walking the slot list one
+        // entry per tick (walks and dashes). Letting both run at once
+        // scrambled the jump script (slot jumped 7 -> 4 -> 4 instead of the
+        // 0..7 sequence), so they are exclusive here.
         let obj = &mut self.objects[i];
         if obj.mode != 0 && obj.speed_scale != 0 {
-            // 0x10DA3: t = (scale + acc_high * 64) / (2 * scale), signed.
+            // 0x10D8B/0x10DA3: advance the accumulator and derive the slot.
+            obj.pos_acc = obj.pos_acc.wrapping_add(FRAME_ACC_STEP);
             let acc_high = ((obj.pos_acc as u32) >> 16) as i32;
             let scale = obj.speed_scale as i32;
             let t = (scale + (acc_high << 6)) / (2 * scale);
@@ -949,7 +953,13 @@ impl FightState {
                 v = 7 - v;
             }
             obj.sub_action = ((v << 2) as u8) & 0xFC;
+        } else {
+            // 0x10AB1: sequential slot walk (the frame's own deltas move us).
+            self.advance_frame(assets, i);
         }
+        // The movement of the action is the selected frame's own `(dx, dy)`
+        // pair (walk stride steps, dash, and the jump arc = its `dy` series).
+        let (_, _, (fdx, fdy)) = self.read_frame(assets, i);
         // 0x10DEA: step bounds with the frame's movement pair. The walk and
         // jump actions encode their direction in the action id (0x40/0x43 =
         // left, 0x41/0x44 = right, 0x42 = neutral - the same convention the
@@ -1223,6 +1233,13 @@ impl FightState {
         let _ = next;
         next = list_base + slot + 4;
         let _ = next;
+        if std::env::var_os("RF_DEBUG_ADV").is_some() {
+            eprintln!(
+                "adv: i={i} script={script_id} slot={:#04x} -> {:#04x}",
+                slot,
+                slot + 4
+            );
+        }
         self.objects[i].sub_action = (slot + 4) as u8;
         self.objects[i].frame = entry.ani_index;
         if entry.flags & 0x04 != 0 {
@@ -1259,12 +1276,12 @@ impl FightState {
     }
 
     /// `0x10B7F` — read the current frame without advancing; returns
-    /// `(ani_index, header_flags)`.
-    fn read_frame(&mut self, assets: &FightAssets, i: usize) -> (u8, u8) {
+    /// `(ani_index, header_flags, (dx, dy))`.
+    fn read_frame(&mut self, assets: &FightAssets, i: usize) -> (u8, u8, (i16, i16)) {
         let char = (self.objects[i].char2 / 2) as usize;
         let script_id = (self.objects[i].hotspot / 4) as usize;
         let Some(script) = assets.frm[char].script(script_id) else {
-            return (self.objects[i].frame, 0);
+            return (self.objects[i].frame, 0, (0, 0));
         };
         let header_flags = script.flags;
         if header_flags & 0x20 != 0 {
@@ -1275,9 +1292,11 @@ impl FightState {
         }
         let frames = assets.frm[char].frame_list(script_id).0;
         let slot = self.objects[i].sub_action as usize / 4;
-        let ani = frames.get(slot).map(|f| f.ani_index).unwrap_or(0x7F);
+        let entry = frames.get(slot);
+        let ani = entry.map(|f| f.ani_index).unwrap_or(0x7F);
+        let deltas = entry.map(|f| (f.dx as i16, f.dy as i16)).unwrap_or((0, 0));
         self.objects[i].frame = ani;
-        (ani, header_flags)
+        (ani, header_flags, deltas)
     }
 
     /// Start an action directly (used by the debug keys while the input

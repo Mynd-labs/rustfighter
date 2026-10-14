@@ -1,6 +1,6 @@
 [package]
 name = "rustfighter"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2021"
 description = "Native Rust reimplementation of the Street Fighter II DOS engine (asset pipeline + viewer)"
 license = "MIT"

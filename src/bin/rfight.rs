@@ -148,6 +148,8 @@ fn main() {
         if std::env::var("SHOT_FIGHT").is_ok() {
             game_state.phase = Phase::Fight;
         }
+        // SHOT_NO_AI=1 keeps the opponent idle for clean composition renders.
+        let shot_ai = std::env::var("SHOT_NO_AI").is_err();
         for f in 0..frames {
             if std::env::var_os("RF_DEBUG_AI").is_some()
                 && f % 5 == 0
@@ -174,7 +176,7 @@ fn main() {
             if fireball_at.map(|at| f > at + 10) == Some(true) {
                 game_state.fights.debug_action = None;
             }
-            game_state.step_frame([0u8; 2], [false, true]);
+            game_state.step_frame([0u8; 2], [false, shot_ai]);
         }
         if fireball_at.is_some() {
             println!(

@@ -633,3 +633,166 @@ fn ai_table_probe() {
         }
     }
 }
+
+#[test]
+fn layer_sprite_probe() {
+    use rustfighter::fight::brain::FightAssets;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    // KEN idle: action table 0x47 -> script; find a frame with both layers.
+    let (script, _) = assets.ait[0].script_for_action(0x47).unwrap();
+    let sid = (script / 4) as usize;
+    let frames = assets.frm[0].frame_list(sid).0;
+    println!("idle script {script:#04x} ({sid}) frames: {}", frames.len());
+    for (i, f) in frames.iter().take(4).enumerate() {
+        let Some(a) = assets.ani[0].frame(f.ani_index as usize) else { continue };
+        println!(
+            "  f{i}: ani={:#04x} T={:#06x} tx={} ty={} txf={} | B={:#06x} bx={} by={} bxf={}",
+            f.ani_index, a.t_handle, a.t_x, a.t_y, a.t_x_flip, a.b_handle, a.b_x, a.b_y, a.b_x_flip
+        );
+    }
+    let f = assets.ani[0]
+        .frame(frames[0].ani_index as usize)
+        .copied()
+        .expect("ani frame");
+    for (label, h) in [("T", f.t_handle), ("B", f.b_handle)] {
+        if let Some(rec) = gd.record_for_handle(h) {
+            let name = rec.trimmed_name();
+            match gd.sprite(name) {
+                Ok(spr) => println!("  {label} {name}: {}x{}", spr.width, spr.height),
+                Err(e) => println!("  {label} {name}: decode error {e}"),
+            }
+        } else {
+            println!("  {label} handle {h:#06x}: no record");
+        }
+    }
+}
+
+#[test]
+fn layer_art_dump() {
+    use rustfighter::canvas::Canvas;
+    use rustfighter::fight::brain::FightAssets;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    let f = assets.ani[0].frame(0x1D).copied().expect("ani 0x1D");
+    let mut canvas = Canvas::new(160, 96);
+    canvas.clear(0);
+    canvas.palette.colors.resize(256, [0, 0, 0]);
+    canvas.palette.colors[1] = [255, 255, 255];
+    canvas.palette.colors[2] = [255, 80, 80];
+    let mut draw = |canvas: &mut Canvas, h: u16, at: i32, tag: u8, color: u8| {
+        if let Some(rec) = gd.record_for_handle(h) {
+            if let Ok(spr) = gd.sprite(rec.trimmed_name()) {
+                println!("{tag} {}: {}x{}", rec.trimmed_name(), spr.width, spr.height);
+                for y in 0..spr.height as i32 {
+                    for x in 0..spr.width as i32 {
+                        let px = spr.pixels[y as usize * spr.width as usize + x as usize];
+                        if px != 0 {
+                            canvas.set(at + x, 8 + y, color);
+                        }
+                    }
+                }
+            }
+        }
+    };
+    draw(&mut canvas, f.t_handle, 4, b'T', 2);
+    draw(&mut canvas, f.b_handle, 84, b'B', 1);
+    canvas.save_png(std::path::Path::new("/tmp/opencode/layers.png")).expect("png");
+    println!("saved /tmp/opencode/layers.png");
+}
+
+#[test]
+fn jump_visual_probe() {
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    let mut st = FightState::new(0, 3, 0); // KEN (P1) vs RYU
+    st.prime(&assets);
+    for _ in 0..90 {
+        st.run_frame(&assets, [0, 0], [false, false]);
+    }
+    // Force a jump: hold up-left (0x43) for two ticks, then release.
+    for t in 0..30 {
+        if t < 2 {
+            st.debug_action = Some((0, 0x43));
+        } else {
+            st.debug_action = None;
+        }
+        st.run_frame(&assets, [0, 0], [false, false]);
+        eprintln!(
+            "t{t:2}: action={:#04x} frame={:3} x={:3} y={:3} sub={:#04x} flags38={:#04x}",
+            st.objects[0].action,
+            st.objects[0].frame,
+            st.players[0].x,
+            st.players[0].y,
+            st.objects[0].sub_action,
+            st.objects[0].flags38
+        );
+    }
+}
+
+#[test]
+fn jump_filmstrip() {
+    use rustfighter::canvas::Canvas;
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    use rustfighter::fight::render::draw_ani_frame;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    let mut st = FightState::new(0, 3, 0);
+    st.prime(&assets);
+    for _ in 0..90 {
+        st.run_frame(&assets, [0, 0], [false, false]);
+    }
+    let mut canvas = Canvas::new(320, 200);
+    canvas.clear(0);
+    canvas.palette.colors.resize(256, [0, 0, 0]);
+    for (i, c) in canvas.palette.colors.iter_mut().enumerate() {
+        *c = [(i as u8).wrapping_mul(3), 40, 90 - (i as u8 / 4)];
+    }
+    // 8 jump ticks side by side at the same screen anchor.
+    let mut jump_x = [0i16; 8];
+    let mut jump_y = [0i16; 8];
+    for t in 0..8 {
+        st.debug_action = if t < 2 { Some((0, 0x43)) } else { None };
+        st.run_frame(&assets, [0, 0], [false, false]);
+        jump_x[t] = st.objects[0].x;
+        jump_y[t] = st.objects[0].y;
+        let obj = st.objects[0];
+        let char_index = 0usize;
+        let frame = assets.ani[char_index]
+            .frame(obj.frame as usize)
+            .copied()
+            .expect("ani frame");
+        let col = t as i32 * 40;
+        let mut lookup = |h: u16| -> Option<rustfighter::sprite::Frame> {
+            gd.record_for_handle(h)
+                .and_then(|r| gd.sprite(r.trimmed_name()).ok())
+        };
+        draw_ani_frame(
+            &mut canvas,
+            &frame,
+            obj.x - jump_x[0] + 30 + col as i16,
+            obj.y - jump_y[0] + 40,
+            obj.facing & 4 != 0,
+            0x30,
+            &mut lookup,
+        );
+    }
+    canvas
+        .save_png(std::path::Path::new("/tmp/opencode/jumpstrip.png"))
+        .expect("png");
+    println!("x={jump_x:?}");
+    println!("y={jump_y:?}");
+}

@@ -98,6 +98,11 @@ pub fn draw_ani_frame(
     if has_sprite(frame.t_handle) {
         if let Some(sprite) = lookup(frame.t_handle) {
             let x = obj_x as i32 + frame.t_x_for(flipped) as i32;
+            // Layer geometry: the T layer top is `T_y - h(spr T) + 0x10` and
+            // the B layer top is `T_y - B_y - h(spr B) + 0x10` (the pair the
+            // reference footage matches: the feet land on the floor line and
+            // the waist overlaps by the art's own padding). The earlier
+            // half-separation came from the missing mirror, not from this.
             let y = obj_y as i32 + frame.t_y as i32 - sprite.height as i32 + 0x10;
             stats.t_pixels = draw_layer(canvas, &sprite, x, y, palette_base, flipped);
         }
