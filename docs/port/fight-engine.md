@@ -473,7 +473,7 @@ Suggested porting order: `fight::fighter` + `fight::entity` → `fight::action` 
 * `frm` = hotspot/offset tables addressed by `obj+0x20` + `obj+0x32` (`0x10AB1`), 3 bytes/entry
   (flag/0xFF, dx, dy).
 * Fixed-point timing: accumulator `+0x26/+0x28 += 0x38000`, divisor `+0x30`, sub-action derivation
-  `0x10DA3–0x10DE5`; the exact tick rate (the loop waits for `DS:0x16A1 >= 5`) not yet measured.
+  `0x10DA3–0x10DE5`; the exact tick rate (the loop waits for `DS:0x16A1 >= 5`) **measured**: the tick ISR is programmed to `1193182 / 6214 = 192 Hz` (`0x12A18..0x12A3C`, PIT mode 0x36), so a frame is 5/192 s and the engine runs at **38.4 fps** (the delta at `DS:0x1694` compensates for slower machines).
 * `[obj+0x1F]`, `[obj+0x39/0x3A]`, `[obj+0x34]`, the remaining flag bits of `+0x1C/+0x38`, player
   fields `+0x0B/+0x0D/+0x15/+0x16/+0x18/+0x19/+0x1A/+0x1B/+0x1F/+0x21` and the low half of the
   player struct’s flag words.

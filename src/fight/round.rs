@@ -21,12 +21,14 @@ pub const ROUND_TIME: u16 = 200;
 
 /// Frames per timer unit.
 ///
-/// The DOS round loop (`0x15083`) is paced by the vertical-retrace wait and the
-/// `DS:0x16A1 >= 5` hold-off and decrements `DS:0x308A` once per iteration; its
-/// 200 units play out as 100 displayed counts (the HUD derives the TIME digits
-/// from the counter). This port runs the bound loop at 60 Hz, so one unit is
-/// advanced every 30 frames - a 100-count round, one count per second.
-pub const TIMER_FRAMES_PER_UNIT: u32 = 30;
+/// The DOS round loop (`0x15083`) decrements `DS:0x308A` once per iteration and
+/// is paced by `0x2AA7` (wait until the byte tick `DS:0x16A1` reaches 5) on top
+/// of the retrace wait. The tick ISR is reprogrammed to
+/// `1193182 / 6214 = 192 Hz` (`0x12A18`), so a frame lasts `5/192 s` and the
+/// engine runs at **38.4 fps**; its 200 units play out as 100 displayed counts
+/// (the HUD derives the TIME digits from the counter), i.e. one unit every
+/// ~0.5 s - 10 frames at the port's 19 fps engine clock.
+pub const TIMER_FRAMES_PER_UNIT: u32 = 10;
 
 /// `flags_a` bit set on the winner (`0x14589`).
 pub const WINNER_FLAG: u16 = 0x8000;

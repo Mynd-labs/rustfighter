@@ -220,7 +220,12 @@ fn main() {
         },
     )
     .expect("cannot create window");
-    window.set_target_fps(60);
+    // The DOS round loop is paced by `0x2AA7` (wait for the byte tick
+    // `DS:0x16A1` to reach 5, ISR at 192 Hz = 38.4 fps ceiling) plus the
+    // retrace wait and the full-screen blit, which on period hardware put the
+    // loop at roughly 19 fps. The engine's own constants (walk 18 px/frame,
+    // fireball 30 px/frame, jump 12 px/frame) play out correctly at this rate.
+    window.set_target_fps(19);
 
     let mut buffer = vec![0u32; W * H];
     while window.is_open() {
@@ -374,6 +379,18 @@ fn main() {
                 }
             }
             Phase::Fight => {
+                if std::env::var_os("RF_DEBUG_FIGHT").is_some() && raw != 0 {
+                    eprintln!(
+                        "fight: raw={raw:#04x} p1=({},{}) p2=({},{}) energy={}/{} timer={}",
+                        game_state.fights.objects[0].x,
+                        game_state.fights.objects[0].y,
+                        game_state.fights.objects[1].x,
+                        game_state.fights.objects[1].y,
+                        game_state.fights.players[0].energy,
+                        game_state.fights.players[1].energy,
+                        game_state.fights.round.timer,
+                    );
+                }
                 game_state.step_frame([raw, 0], [false, true]);
                 if window.is_key_pressed(Key::Escape, minifb::KeyRepeat::No) {
                     game_state.phase = Phase::Title;
@@ -578,7 +595,7 @@ impl Game {
                     }
                 };
                 self.banner = Some(text);
-                self.banner_timer = 180;
+                self.banner_timer = 48; // ~2.5 s at 19 fps
             }
         } else {
             self.banner_timer = self.banner_timer.saturating_sub(1);
@@ -602,7 +619,7 @@ impl Game {
                     self.round_no = 1;
                     if self.continues_left > 0 {
                         self.phase = Phase::Continue;
-                        self.continue_timer = 10 * 60; // 10 seconds
+                        self.continue_timer = 10 * 19; // 10 seconds at 19 fps
                     } else {
                         self.phase = Phase::Title;
                         self.continues_left = 3;
@@ -786,7 +803,7 @@ impl Game {
         canvas.palette.colors.resize(256, [0, 0, 0]);
         canvas.palette.colors[254] = [255, 255, 255];
         binfont::draw_text(&mut canvas, "CONTINUE?", 120, 70, 254);
-        let secs = self.continue_timer / 60;
+        let secs = self.continue_timer / 19;
         binfont::draw_text(&mut canvas, &format!("{secs:2}"), 152, 90, 254);
         binfont::draw_text(&mut canvas, "PRESS ENTER/SPACE TO CONTINUE", 40, 120, 254);
         canvas

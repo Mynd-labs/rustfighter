@@ -737,6 +737,8 @@ impl FightState {
                 .copied()
                 .unwrap_or(0);
             self.players[i].flags_a &= !0x0080;
+            // A new action re-arms the connect latch.
+            self.players[i].flags_a &= !(hit::CONNECT_800 | hit::CONNECT_1000);
             self.players[i].ai_timer = 0;
         }
         self.commit_action(i, action, script, param);
@@ -777,7 +779,21 @@ impl FightState {
             return;
         }
         obj.b3b = script;
-        obj.flags38 = (obj.flags38 | 0x04) & !0x08 & !0x10;
+        // The animation lock (`0x10C7E`) is skipped for the walk actions: the
+        // engine starts walks through `0x110CA` (no script commit), so a walk
+        // never locks out the attack that follows it.
+        if !matches!(obj.action, 0x40 | 0x41) {
+            obj.flags38 = (obj.flags38 | 0x04) & !0x08 & !0x10;
+        }
+        // A new action that is neither a walk nor a jump stops the movement
+        // the previous action had: only those arms set the active path bit
+        // (`0x110CA` / `0x10CC9`) and the per-frame speed, and the engine runs
+        // attacks through the idle path (observed: action 0x35 with flags38
+        // 0x05, no marching while the fireball comes out).
+        if !matches!(obj.action, 0x40..=0x44) {
+            obj.flags38 &= !0x80;
+            obj.x_speed = 0;
+        }
         obj.hotspot = script as u16; // already script_id * 4 (header offset)
         obj.sub_action = 0;
         let script_id = (script / 4) as usize;
@@ -803,18 +819,33 @@ impl FightState {
             self.sound_events = sounds;
         }
         match obj.action {
+            // `0x110CA` - start walk (0x40 = walk left, 0x41 = walk right, the
+            // actions the per-input table picks for the left/right classes).
+            // The walk takes the active-action path; its speed is the driver
+            // default and follows the facing (the engine turns the fighter
+            // before the walk starts). The engine's routine also clears the
+            // frame accumulator and the speed scale.
+            0x40 | 0x41 => {
+                // The walk frames carry the movement (dx 4/frame, negated when
+                // facing left); `0x110CA` contributes the active-path bit.
+                obj.flags38 |= 0x80;
+                obj.x_speed = 0;
+                obj.sub_action = 0;
+                obj.pos_acc = 0;
+                obj.speed_scale = 0;
+            }
             0x42..=0x44 => {
                 obj.flags38 |= 0x80;
                 let char = (obj.char2 / 2) as usize;
-                obj.x_speed = if obj.action == 0x42 {
-                    0
-                } else {
-                    let sp = tables::JUMP_SPEED[char];
-                    if obj.facing & 4 != 0 {
-                        -(sp as i16)
-                    } else {
-                        sp as i16
-                    }
+                // `0x10CE2`: the jump actions encode fixed directions - 0x43 is
+                // always -x, 0x44 is always +x (0x42 is the neutral jump), not
+                // facing-relative: the input table picks 0x43/0x44 by the
+                // up-left / up-right classes.
+                let sp = tables::JUMP_SPEED[char] as i16;
+                obj.x_speed = match obj.action {
+                    0x42 => 0,
+                    0x43 => -sp,
+                    _ => sp,
                 };
                 obj.sub_action = if obj.action == 0x42 { 0 } else { 0x1C };
                 obj.mode = if obj.action == 0x42 { 4 } else { 0xFC };
@@ -885,8 +916,11 @@ impl FightState {
     /// The movement/physics path for an active action (0x10D85..0x11034,
     /// condensed to the documented core).
     fn action_active_step(&mut self, assets: &FightAssets, i: usize, opp: usize) {
-        // 0x10D85: read the current frame (no advance).
-        let (_, _) = self.read_frame(assets, i);
+        // 0x10D85: advance the animation frame. The movement of an active
+        // action is the frame's own `(dx, dy)` pair (`0x10AB1`): walk frames
+        // step 4 px, dash frames 10 px, and the jump arc is literally the `dy`
+        // sequence of its frames. The `dx` sign follows the facing (`0x10E4F`).
+        let (_, (fdx, fdy)) = self.advance_frame(assets, i);
         // 0x10D8B: accumulator.
         self.objects[i].pos_acc = self.objects[i].pos_acc.wrapping_add(FRAME_ACC_STEP);
         let obj = &mut self.objects[i];
@@ -905,8 +939,46 @@ impl FightState {
             }
             obj.sub_action = ((v << 2) as u8) & 0xFC;
         }
-        // 0x10DEA: step bounds with (x_speed, y delta 0).
-        let (finished, cx, dy) = self.step_bounds(i, self.objects[i].x_speed, 0);
+        // 0x10DEA: step bounds with the frame's movement pair. The walk and
+        // jump actions encode their direction in the action id (0x40/0x43 =
+        // left, 0x41/0x44 = right, 0x42 = neutral - the same convention the
+        // engine's own jump setup uses), and the frames supply the speed
+        // profile (the walk stride steps 6/5/9/10/5 px etc.). Other actions
+        // use the sprite-space sign with the facing flip.
+        let facing_right = self.objects[i].facing & 4 != 0;
+        let dir = match self.objects[i].action {
+            0x40 => -1i16,
+            0x41 => 1,
+            0x42 => 0,
+            0x43 => -1,
+            0x44 => 1,
+            _ => {
+                if facing_right {
+                    -1
+                } else {
+                    1
+                }
+            }
+        };
+        let sx = if matches!(self.objects[i].action, 0x40..=0x44) {
+            fdx.abs() * dir
+        } else if facing_right {
+            -fdx
+        } else {
+            fdx
+        };
+        let (finished, cx, dy) = self.step_bounds(i, sx, fdy);
+        if std::env::var_os("RF_DEBUG_MOVE").is_some() {
+            eprintln!(
+                "move: action={:#04x} hotspot={} sub={:#04x} frame={} fdx={fdx} fdy={fdy} facing={:#04x} sx={sx} cx={cx} flags_a={:#06x}",
+                self.objects[i].action,
+                self.objects[i].hotspot,
+                self.objects[i].sub_action,
+                self.objects[i].frame,
+                self.objects[i].facing,
+                self.players[i].flags_a,
+            );
+        }
         let (cx, dy) = if !finished {
             if self.players[i].flags_a & 0x1000 != 0 {
                 (self.players[i].b0e as i16, dy) // pushback
@@ -1213,7 +1285,13 @@ impl FightState {
             if self.players[atk].flags_a & hit::ATTACK_ARMED == 0 {
                 continue;
             }
-            if self.objects[atk].flags & 0x0800 != 0 {
+            // The connect latch (`0x12280`): once this attack has landed it
+            // cannot land again; the bit lives in the attacker's `flags_a`
+            // (`0x0800` / the wall variant `0x1000`) and is cleared when the
+            // next action starts. (The old check tested the *draw object's*
+            // flags, which are never set - the attack then re-hit every
+            // frame and a single punch could melt a full health bar.)
+            if self.players[atk].flags_a & (hit::CONNECT_800 | hit::CONNECT_1000) != 0 {
                 continue;
             }
             if self.players[def].flags_b & 0x0004 != 0 {

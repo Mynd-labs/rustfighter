@@ -344,7 +344,19 @@ fn fireball_spawns_and_hits_with_real_tables() {
     st.debug_action = Some((0, 0x35));
     let mut spawned = false;
     for _ in 0..300 {
-        st.run_frame(&assets, [0, 0], [false, true]);
+        // AI off: with working walks, KEN would close in and interrupt the
+        // scripted fireball the test is measuring.
+        st.run_frame(&assets, [0, 0], [false, false]);
+        eprintln!(
+            "dbg: action={:#04x} sub={:#04x} mode={:#04x} scale={:#06x} flags38={:#04x} x={} proj={}",
+            st.objects[0].action,
+            st.objects[0].sub_action,
+            st.objects[0].mode,
+            st.objects[0].speed_scale,
+            st.objects[0].flags38,
+            st.players[0].x,
+            st.projectiles.len()
+        );
         if !st.projectiles.is_empty() {
             spawned = true;
             break;
@@ -385,6 +397,16 @@ fn real_input_fires_hadouken_through_the_recogniser() {
     'outer: for (byte, dur) in script {
         for _ in 0..dur {
             st.run_frame(&assets, [byte, 0], [false, false]);
+            eprintln!(
+                "byte {byte:#04x}: action={:#04x} sub={:#04x} mode={:#04x} scale={:#06x} flags38={:#04x} x={} proj={}",
+                st.objects[0].action,
+                st.objects[0].sub_action,
+                st.objects[0].mode,
+                st.objects[0].speed_scale,
+                st.objects[0].flags38,
+                st.players[0].x,
+                st.projectiles.len()
+            );
             if !st.projectiles.is_empty() {
                 fired = true;
                 break 'outer;
@@ -435,4 +457,152 @@ fn screens_have_plausible_geometry() {
         assert!(info.width >= 256);
         assert!(info.height >= 40);
     }
+}
+
+#[test]
+fn held_right_walks_p1() {
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    let mut st = FightState::new(0, 3, 0); // KEN (P1) vs RYU
+    st.prime(&assets);
+    let x0 = st.players[0].x;
+    // Measure the first 8 frames: the walk frames step 4 px each (`0x10AB1`).
+    for f in 0..8 {
+        st.run_frame(&assets, [0x08, 0], [false, false]);
+        eprintln!(
+            "f{f}: action={:#04x} facing={:#04x} x={} x_speed={}",
+            st.objects[0].action,
+            st.objects[0].facing,
+            st.players[0].x,
+            st.objects[0].x_speed
+        );
+    }
+    let x1 = st.players[0].x;
+    let dx = (x1 - x0) as f32;
+    assert!(
+        (25.0..=50.0).contains(&dx),
+        "walk distance after 8 frames {dx} out of range (x {x0} -> {x1}, action {:#04x})",
+        st.objects[0].action
+    );
+    for _ in 0..120 {
+        st.run_frame(&assets, [0x08, 0], [false, false]);
+    }
+    // Left: 0x40 must walk the other way (facing turns first).
+    let xr = st.players[0].x;
+    for _ in 0..60 {
+        st.run_frame(&assets, [0x04, 0], [false, false]);
+    }
+    assert!(
+        st.players[0].x < xr,
+        "P1 should walk left after the turn: {} -> {}",
+        xr,
+        st.players[0].x
+    );
+}
+
+#[test]
+fn jump_directions_follow_the_action() {
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    for (action, expect_neg) in [(0x43u8, true), (0x44, false)] {
+        let mut st = FightState::new(0, 3, 0); // KEN faces right
+        st.prime(&assets);
+        for _ in 0..90 {
+            st.run_frame(&assets, [0, 0], [false, false]);
+        }
+        st.debug_action = Some((0, action));
+        let mut seen = None;
+        for _ in 0..10 {
+            st.run_frame(&assets, [0, 0], [false, false]);
+            if st.objects[0].flags38 & 0x80 != 0 {
+                seen = Some(st.objects[0].x_speed);
+                break;
+            }
+        }
+        st.debug_action = None;
+        let speed = seen.unwrap_or_else(|| panic!("action {action:#04x} must activate"));
+        assert_eq!(
+            speed < 0,
+            expect_neg,
+            "action {action:#04x}: x_speed {speed} (negative expected: {expect_neg})"
+        );
+    }
+}
+
+#[test]
+fn walk_script_headers_probe() {
+    use rustfighter::fight::brain::FightAssets;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    for action in [0x40u8, 0x41, 0x42, 0x43, 0x44, 0x35] {
+        let Some((script, param)) = assets.ait[0].script_for_action(action) else {
+            println!("action {action:#04x}: no script");
+            continue;
+        };
+        let hdr = assets.frm[0].script((script / 4) as usize);
+        println!(
+            "action {action:#04x}: script {script:#04x} param {param:#x} hdr flags {:#04x}",
+            hdr.map(|h| h.flags).unwrap_or(0xFF)
+        );
+    }
+}
+
+#[test]
+fn walk_frames_probe() {
+    use rustfighter::fight::brain::FightAssets;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    // KEN: walk script 0x04 (id 1), jump 0x05 (id 1?) probe several scripts.
+    for script_id in [1usize, 2, 3, 5] {
+        let frames = assets.frm[0].frame_list(script_id).0;
+        let desc: Vec<String> = frames
+            .iter()
+            .take(8)
+            .map(|f| format!("({:#04x},dx{},dy{})", f.ani_index, f.dx, f.dy))
+            .collect();
+        println!("script {script_id}: {}", desc.join(" "));
+    }
+}
+
+#[test]
+fn melee_hit_damages_once_not_per_frame() {
+    use rustfighter::fight::brain::{FightAssets, FightState};
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    let mut st = FightState::new(0, 3, 0); // KEN (P1) vs RYU
+    st.prime(&assets);
+    for _ in 0..90 {
+        st.run_frame(&assets, [0, 0], [false, false]);
+    }
+    // Put RYU within punch range and punch (button-only input -> the
+    // per-character normal attack from the ait tables).
+    st.players[1].x = st.players[0].x + 0x30;
+    st.players[1].y = st.players[0].y;
+    let before = st.players[1].energy;
+    for _ in 0..12 {
+        st.run_frame(&assets, [0x30, 0], [false, false]);
+    }
+    let loss = before.saturating_sub(st.players[1].energy);
+    assert!(loss > 0, "the punch must connect (energy {before} -> {})", st.players[1].energy);
+    assert!(
+        loss <= 25,
+        "a single punch lost {loss} HP in 12 frames - the connect latch is not holding"
+    );
 }
