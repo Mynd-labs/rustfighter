@@ -22,6 +22,8 @@ rm -rf "$WORK" "$OUT/pkg"
 mkdir -p "$WORK/deb/DEBIAN" "$WORK/deb/usr/bin" \
          "$WORK/deb/usr/share/applications" \
          "$WORK/deb/usr/share/icons/hicolor/256x256/apps"
+chmod 755 "$WORK/deb" "$WORK/deb/DEBIAN"
+chmod -R a+rX "$WORK/deb/usr"
 cp target/release/rfight target/release/rfplay target/release/rfdump "$WORK/deb/usr/bin/"
 chmod 755 "$WORK"/deb/usr/bin/*
 
