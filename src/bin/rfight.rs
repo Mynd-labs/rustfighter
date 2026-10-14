@@ -119,6 +119,8 @@ fn main() {
         title_logo: None,
         title_marker: None,
         title_message: None,
+        prev_pos: [(0, 0); 2],
+        lerp_t: 1.0,
     };
     game_state.fights.objects[0].y = GROUND;
     game_state.fights.objects[1].y = GROUND;
@@ -225,7 +227,15 @@ fn main() {
     // retrace wait and the full-screen blit, which on period hardware put the
     // loop at roughly 19 fps. The engine's own constants (walk 18 px/frame,
     // fireball 30 px/frame, jump 12 px/frame) play out correctly at this rate.
-    window.set_target_fps(19);
+    window.set_target_fps(60);
+
+    // The game logic keeps the DOS round-loop cadence (~19.2 Hz: the PIT tick
+    // ISR at 192 Hz divided by the 5-tick hold-off, plus the retrace wait and
+    // the full-screen blit). The window runs at 60 Hz: input is polled every
+    // window frame and the fighters are interpolated between engine ticks, so
+    // the motion is smooth without changing the game's own timing.
+    let tick_period = Duration::from_secs_f64(52.0 / 1000.0);
+    let mut next_tick = std::time::Instant::now();
 
     let mut buffer = vec![0u32; W * H];
     while window.is_open() {
@@ -237,6 +247,14 @@ fn main() {
             down[scancode as usize] = window.is_key_down(key)
                 || window.is_key_pressed(key, minifb::KeyRepeat::No);
         }
+        // One engine tick at the DOS cadence; the raw byte is sampled from the
+        // polls above, so a tap between two ticks is still seen.
+        let now = std::time::Instant::now();
+        if now >= next_tick {
+            next_tick += tick_period;
+            if next_tick <= now {
+                next_tick = now + tick_period;
+            }
         game_state.keys.update(&game_state.input, |s| down[s as usize]);
         // Provisional raw byte for P1: direction bits (1/2/4/8) + edges.
         let mut raw = 0u8;
@@ -379,6 +397,10 @@ fn main() {
                 }
             }
             Phase::Fight => {
+                game_state.prev_pos = [
+                    (game_state.fights.objects[0].x, game_state.fights.objects[0].y),
+                    (game_state.fights.objects[1].x, game_state.fights.objects[1].y),
+                ];
                 if std::env::var_os("RF_DEBUG_FIGHT").is_some() && raw != 0 {
                     eprintln!(
                         "fight: raw={raw:#04x} p1=({},{}) p2=({},{}) energy={}/{} timer={}",
@@ -413,6 +435,12 @@ fn main() {
                 }
             }
         }
+        }
+        // Interpolated draw between the last and the current engine tick.
+        let remain = next_tick
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs_f32();
+        game_state.lerp_t = (1.0 - remain / tick_period.as_secs_f32()).clamp(0.0, 1.0);
         let canvas = game_state.render();
         let rgb = canvas.to_rgb();
         for (i, px) in rgb.chunks_exact(3).enumerate() {
@@ -485,6 +513,11 @@ struct Game {
     title_marker: Option<rustfighter::sprite::Frame>,
     /// Status line for the entries that are not ported yet.
     title_message: Option<String>,
+    /// Fighters' screen positions at the previous engine tick, for the
+    /// interpolated draw between ticks.
+    prev_pos: [(i16, i16); 2],
+    /// Interpolation factor of the current draw (0 = previous tick, 1 = now).
+    lerp_t: f32,
 }
 
 impl Game {
@@ -676,7 +709,12 @@ impl Game {
         install_character_palettes(&mut canvas, &pal1, &pal2);
         // Fighters.
         for i in 0..2 {
-            let obj = self.fights.objects[i];
+            let mut obj = self.fights.objects[i];
+            // Smooth the motion between the ~19 Hz engine ticks.
+            let (px, py) = self.prev_pos[i];
+            let a = self.lerp_t.clamp(0.0, 1.0);
+            obj.x = (px as f32 + (obj.x - px) as f32 * a).round() as i16;
+            obj.y = (py as f32 + (obj.y - py) as f32 * a).round() as i16;
             let char_index = (obj.char2 / 2) as usize;
             let frame_index = obj.frame as usize;
             if let Some(frame) = self.assets.ani[char_index].frame(frame_index).copied() {
@@ -730,7 +768,7 @@ impl Game {
                 let base = if p.owner == 0 { PALETTE_BASE_P1 } else { PALETTE_BASE_P2 };
                 let x = p.x as i32 - sprite.width as i32 / 2;
                 let y = p.y as i32 - sprite.height as i32 / 2;
-                rustfighter::fight::render::draw_layer(&mut canvas, sprite, x, y, base);
+                rustfighter::fight::render::draw_layer(&mut canvas, sprite, x, y, base, false);
             }
         }
         self.draw_hud(&mut canvas);
@@ -786,7 +824,7 @@ impl Game {
         }
         if let Some(marker) = &self.title_marker {
             let y = 136 + 12 * self.title_cursor as i32 - 4;
-            rustfighter::fight::render::draw_layer(&mut canvas, marker, 98, y, 0x70);
+            rustfighter::fight::render::draw_layer(&mut canvas, marker, 98, y, 0x70, false);
         }
         // Bottom line: the hint, or the "not ported" note for the entry.
         let hint = self
@@ -818,7 +856,7 @@ impl Game {
         if let Some(info) = self.gd.screens().into_iter().find(|s| s.name == "linSELECMAP") {
             if let Ok(map) = self.gd.load_screen(&info) {
                 let mx = 32i32;
-                let my = 36i32;
+                let my = 0i32; // 0x18D34: blit linSELECMAP at (0x20, 0)
                 for sy in 0..map.height {
                     for sx in 0..map.width {
                         let px = map.pixels[sy * map.width + sx];
@@ -839,8 +877,8 @@ impl Game {
             if let Some(flag) = flag {
                 let (x, y, _dx, _dy) = rustfighter::fight::select::MARKER_POS[i];
                 let fx = 32 + x as i32 - flag.width as i32 / 2;
-                let fy = 36 + y as i32 - flag.height as i32 / 2;
-                rustfighter::fight::render::draw_layer(&mut canvas, flag, fx, fy, 0x70);
+                let fy = y as i32 - flag.height as i32 / 2;
+                rustfighter::fight::render::draw_layer(&mut canvas, flag, fx, fy, 0x70, false);
             }
         }
         // Cursors at the markers of the current cells.
@@ -851,8 +889,8 @@ impl Game {
             if let Some(cursor) = self.cursors.get(player).and_then(|c| c.as_ref()) {
                 // `dx`/`dy` are signed bytes stored raw (`0x44E4`): cast via i8.
                 let cx = 32 + x as i32 + (dx as i8) as i32 - cursor.width as i32 / 2;
-                let cy = 36 + y as i32 + (dy as i8) as i32 - cursor.height as i32 / 2;
-                rustfighter::fight::render::draw_layer(&mut canvas, cursor, cx, cy, 0x70);
+                let cy = y as i32 + (dy as i8) as i32 - cursor.height as i32 / 2;
+                rustfighter::fight::render::draw_layer(&mut canvas, cursor, cx, cy, 0x70, false);
             }
         }
         binfont::draw_text(&mut canvas, "PLAYER SELECT", 110, 4, 254);

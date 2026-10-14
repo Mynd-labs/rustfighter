@@ -33,11 +33,18 @@ pub fn draw_layer(
     x: i32,
     y: i32,
     palette_base: u8,
+    flipped: bool,
 ) -> usize {
+    let w = sprite.width as i32;
     let mut drawn = 0;
     for fy in 0..sprite.height as i32 {
-        for fx in 0..sprite.width as i32 {
-            let px = sprite.pixels[fy as usize * sprite.width as usize + fx as usize];
+        for fx in 0..w {
+            // The engine mirrors the sprite box when the draw flip is set
+            // (`obj[0x1c] & 4`): the X offsets (`T_x_flip`/`B_x_flip`) and the
+            // pixel mirror belong together - drawing unmirrored at the flip
+            // offsets shifts the two body layers apart.
+            let sx = if flipped { (w - 1 - fx) as usize } else { fx as usize };
+            let px = sprite.pixels[fy as usize * sprite.width as usize + sx];
             if px != 0 {
                 canvas.set(x + fx, y + fy, palette_base.wrapping_add(px));
                 drawn += 1;
@@ -84,7 +91,7 @@ pub fn draw_ani_frame(
             let y = obj_y as i32 + frame.t_y as i32 - frame.b_y as i32
                 - sprite.height as i32
                 + 0x10;
-            stats.b_pixels = draw_layer(canvas, &sprite, x, y, palette_base);
+            stats.b_pixels = draw_layer(canvas, &sprite, x, y, palette_base, flipped);
         }
     }
     // T layer on top.
@@ -92,7 +99,7 @@ pub fn draw_ani_frame(
         if let Some(sprite) = lookup(frame.t_handle) {
             let x = obj_x as i32 + frame.t_x_for(flipped) as i32;
             let y = obj_y as i32 + frame.t_y as i32 - sprite.height as i32 + 0x10;
-            stats.t_pixels = draw_layer(canvas, &sprite, x, y, palette_base);
+            stats.t_pixels = draw_layer(canvas, &sprite, x, y, palette_base, flipped);
         }
     }
     stats

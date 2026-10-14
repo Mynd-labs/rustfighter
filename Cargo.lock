@@ -852,7 +852,7 @@ dependencies = [
 
 [[package]]
 name = "rustfighter"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "cpal",
  "image",
