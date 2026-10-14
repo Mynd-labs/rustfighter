@@ -557,9 +557,11 @@ pub fn screen_dims(name: &str, data: &[u8]) -> Option<(usize, usize, usize)> {
     }
     let embedded = palette::embedded_palette_len(data);
     let body = data.len().checked_sub(embedded)?;
-    // The logo band is 384x94 under its embedded 768-byte palette.
-    if name.ends_with("SF2BLOGO") && body == 384 * 94 {
-        return Some((384, 94, embedded));
+    // The title/credits/option logo is 288x128 (36,864 bytes - the same byte
+    // count as a 256x144 guess, which shreds it into horizontal streaks). The
+    // observed draw call places it at (0x10,0) on the 320-wide screen.
+    if name.ends_with("SF2BLOGO") && data.len() == 288 * 128 {
+        return Some((288, 128, 0));
     }
     if embedded > 0 && body % 320 == 0 && (8..=250).contains(&(body / 320)) {
         return Some((320, body / 320, embedded));

@@ -19,6 +19,15 @@ use crate::fight::fighter::Fighter;
 /// Initial round timer value (`0x152FE: mov word [0x308A], 0xC8`).
 pub const ROUND_TIME: u16 = 200;
 
+/// Frames per timer unit.
+///
+/// The DOS round loop (`0x15083`) is paced by the vertical-retrace wait and the
+/// `DS:0x16A1 >= 5` hold-off and decrements `DS:0x308A` once per iteration; its
+/// 200 units play out as 100 displayed counts (the HUD derives the TIME digits
+/// from the counter). This port runs the bound loop at 60 Hz, so one unit is
+/// advanced every 30 frames - a 100-count round, one count per second.
+pub const TIMER_FRAMES_PER_UNIT: u32 = 30;
+
 /// `flags_a` bit set on the winner (`0x14589`).
 pub const WINNER_FLAG: u16 = 0x8000;
 /// `flags_b` bit set on the loser / both fighters on a draw (`0x1458E/0x14594`).
@@ -52,6 +61,8 @@ pub struct Round {
     pub ko: bool,
     /// Outcome once decided.
     pub outcome: Option<RoundOutcome>,
+    /// Frame divider for [`TIMER_FRAMES_PER_UNIT`].
+    pub tick_div: u32,
 }
 
 impl Default for Round {
@@ -61,6 +72,7 @@ impl Default for Round {
             result: 0xFF,
             ko: false,
             outcome: None,
+            tick_div: 0,
         }
     }
 }
@@ -93,7 +105,11 @@ impl Round {
             return None;
         }
         if self.timer > 0 {
-            self.timer -= 1;
+            self.tick_div += 1;
+            if self.tick_div >= TIMER_FRAMES_PER_UNIT {
+                self.tick_div = 0;
+                self.timer -= 1;
+            }
         }
         if self.timer == 0 {
             return Some(self.resolve(energy, true));
@@ -179,9 +195,15 @@ mod tests {
     fn timer_counts_down_and_times_over() {
         let mut round = Round::new();
         round.timer = 2;
-        assert!(round.tick([100, 100], false).is_none());
+        for _ in 0..TIMER_FRAMES_PER_UNIT {
+            assert!(round.tick([100, 100], false).is_none());
+        }
         assert_eq!(round.timer, 1);
-        let out = round.tick([100, 100], false).unwrap();
+        let mut out = None;
+        for _ in 0..TIMER_FRAMES_PER_UNIT {
+            out = round.tick([100, 100], false);
+        }
+        let out = out.unwrap();
         assert_eq!(out, RoundOutcome::TimeOver { winner: None });
         assert_ne!(round.result, 0xFF);
         // Idempotent after decision.
@@ -192,7 +214,9 @@ mod tests {
     fn freeze_pauses_timer() {
         let mut round = Round::new();
         round.timer = 5;
-        assert!(round.tick([100, 100], true).is_none());
+        for _ in 0..TIMER_FRAMES_PER_UNIT * 2 {
+            assert!(round.tick([100, 100], true).is_none());
+        }
         assert_eq!(round.timer, 5);
     }
 
