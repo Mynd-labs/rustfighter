@@ -7,6 +7,15 @@
 
 set -euo pipefail
 
+# Guard: the script wipes "$out/street-fighter-ii" before copying, so the game
+# directory must never live inside the output directory.
+case "$game" in
+  "$out"/*)
+    echo "error: GAME_DIR ($game) is inside OUT_DIR ($out) and would be deleted; use a separate game folder" >&2
+    exit 1
+    ;;
+esac
+
 game="${1:-}"
 out="${2:-Rustfighter}"
 if [ -z "$game" ]; then
