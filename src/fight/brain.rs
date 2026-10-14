@@ -549,6 +549,14 @@ impl FightState {
 
     /// `0x10524` — the AI decision.
     fn ai_decide(&mut self, assets: &FightAssets, i: usize, opp: usize) -> u8 {
+        // Decision delay (`0x10554` stores it in `player[0x1A]`): while it
+        // runs the AI keeps its current action instead of re-deciding every
+        // frame. Without this the CPU re-picked an action on every tick and
+        // chained attacks far faster than the original.
+        if self.players[i].b1a != 0 {
+            self.players[i].b1a -= 1;
+            return self.objects[i].action;
+        }
         let opp_attacking = self.players[opp].flags_a & 0x0020 != 0
             && self.players[i].flags_a & 3 != 2;
         let mut action = if opp_attacking {
@@ -559,11 +567,14 @@ impl FightState {
         } else {
             self.ai_bucket_pick(assets, i)
         };
-        // Decision delay from `obj[0x1C]` (0x10554).
+        // Decision delay (`0x10554`): the engine works on the low bytes -
+        // `((obj[0x1C] ^ 7) >> 1)` minus `((char*2 - 0x12) >> 1)`, clamped at
+        // zero - so the delay is 0..=3 frames, never a wild value.
         let obj = &self.objects[i];
-        let delay = ((((obj.flags as u16) ^ 7) >> 1).saturating_sub(
-            ((obj.flags38 as u16).wrapping_sub(0x12)) >> 1,
-        )) as u8;
+        let mut delay = ((obj.flags & 0xFF) as u8 ^ 7) >> 1;
+        if obj.char2 >= 0x12 {
+            delay = delay.saturating_sub((obj.char2 - 0x12) >> 1);
+        }
         self.players[i].b1a = delay;
         self.players[i].b1b = 0;
         if (0x18..=0x2B).contains(&self.objects[i].action) {

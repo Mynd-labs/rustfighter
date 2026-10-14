@@ -606,3 +606,30 @@ fn melee_hit_damages_once_not_per_frame() {
         "a single punch lost {loss} HP in 12 frames - the connect latch is not holding"
     );
 }
+
+#[test]
+fn ai_table_probe() {
+    use rustfighter::fight::brain::FightAssets;
+    let Some(gd) = data() else {
+        eprintln!("skip: game data not found");
+        return;
+    };
+    let assets = FightAssets::load(&gd).expect("assets");
+    // Section 3 = the AI distance-bucket table: 8 buckets x 3 states x 8 rolls.
+    for char in [0usize, 3] {
+        let Some(t) = assets.ait[char].section(3) else {
+            println!("char {char}: no section 3");
+            continue;
+        };
+        println!("char {char} section3 len={}", t.len());
+        for bucket in 0..8usize {
+            for state in 0..3usize {
+                let idx = bucket * 24 + state * 8;
+                let row: Vec<String> = (0..8)
+                    .map(|r| format!("{:#04x}", t.get(idx + r).copied().unwrap_or(0xFF)))
+                    .collect();
+                println!("  b{bucket} s{state}: {}", row.join(" "));
+            }
+        }
+    }
+}

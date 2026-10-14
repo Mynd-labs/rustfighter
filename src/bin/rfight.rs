@@ -121,6 +121,7 @@ fn main() {
         title_message: None,
         prev_pos: [(0, 0); 2],
         lerp_t: 1.0,
+        intro_ticks: ROUND_INTRO_TICKS,
     };
     game_state.fights.objects[0].y = GROUND;
     game_state.fights.objects[1].y = GROUND;
@@ -148,6 +149,22 @@ fn main() {
             game_state.phase = Phase::Fight;
         }
         for f in 0..frames {
+            if std::env::var_os("RF_DEBUG_AI").is_some()
+                && f % 5 == 0
+                && f >= 30
+            {
+                eprintln!(
+                    "f{f:3}: p2 action={:#04x} frame={:3} x={:3} y={} sub={:#04x} ai_timer={} b1a={} energy={}",
+                    game_state.fights.objects[1].action,
+                    game_state.fights.objects[1].frame,
+                    game_state.fights.objects[1].x,
+                    game_state.fights.objects[1].y,
+                    game_state.fights.objects[1].sub_action,
+                    game_state.fights.players[1].ai_timer,
+                    game_state.fights.players[1].b1a,
+                    game_state.fights.players[1].energy,
+                );
+            }
             if fireball_at == Some(f) {
                 game_state.fights.debug_action = Some((0, 0x35));
             }
@@ -413,7 +430,14 @@ fn main() {
                         game_state.fights.round.timer,
                     );
                 }
-                game_state.step_frame([raw, 0], [false, true]);
+                let intro = game_state.intro_ticks > 0;
+                if intro {
+                    game_state.intro_ticks -= 1;
+                }
+                game_state.step_frame(
+                    if intro { [0u8; 2] } else { [raw, 0] },
+                    if intro { [false, false] } else { [false, true] },
+                );
                 if window.is_key_pressed(Key::Escape, minifb::KeyRepeat::No) {
                     game_state.phase = Phase::Title;
                 }
@@ -462,6 +486,11 @@ enum Phase {
 /// The keys we feed through the scancode layer (CONFIG.SF2 defaults).
 /// Title menu items (`DS:0x43DE`).
 const TITLE_ITEMS: [&str; 4] = ["GAME START", "V.S. BATTLE", "OPTION MODE", "QUIT TO DOS"];
+
+/// Round-intro hold in engine ticks (~2.1 s at the 19.2 Hz tick): the
+/// original runs the "ROUND n / FIGHT!" beat before either fighter can act,
+/// while this port started both (and the CPU) on tick 1.
+const ROUND_INTRO_TICKS: u8 = 40;
 
 const SCANCODE_KEYS: [(u8, Key); 12] = [
     (0x48, Key::Up),
@@ -518,6 +547,8 @@ struct Game {
     prev_pos: [(i16, i16); 2],
     /// Interpolation factor of the current draw (0 = previous tick, 1 = now).
     lerp_t: f32,
+    /// Remaining round-intro ticks (both fighters held idle).
+    intro_ticks: u8,
 }
 
 impl Game {
@@ -553,6 +584,7 @@ impl Game {
 
     /// Build (or rebuild) the fight for two character indices.
     fn start_fight_indices(&mut self, c1: usize, c2: usize) {
+        self.intro_ticks = ROUND_INTRO_TICKS;
         self.fights = FightState::new(c1, c2, 0);
         self.fights.objects[0].y = GROUND;
         self.fights.objects[1].y = GROUND;
@@ -575,6 +607,7 @@ impl Game {
     }
 
     fn reset_round(&mut self) {
+        self.intro_ticks = ROUND_INTRO_TICKS;
         self.fights.round = rustfighter::fight::round::Round::new();
         self.banner = None;
         self.banner_timer = 0;
@@ -603,7 +636,7 @@ impl Game {
         }
         if self.banner.is_none() {
             let energies = [self.fights.players[0].energy, self.fights.players[1].energy];
-            if let Some(outcome) = self.fights.round.tick(energies, false) {
+            if let Some(outcome) = self.fights.round.tick(energies, self.intro_ticks > 0) {
                 // Battle records: winner takes a round win (`0x2A2C+2`).
                 let winner = match outcome {
                     RoundOutcome::Winner { player } => Some(player),
