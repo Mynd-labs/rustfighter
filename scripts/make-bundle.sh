@@ -7,6 +7,13 @@
 
 set -euo pipefail
 
+game="${1:-}"
+out="${2:-Rustfighter}"
+if [ -z "$game" ]; then
+    echo "usage: $0 <game-folder> [output-dir]" >&2
+    exit 2
+fi
+
 # Guard: the script wipes "$out/street-fighter-ii" before copying, so the game
 # directory must never live inside the output directory.
 case "$game" in
@@ -15,13 +22,6 @@ case "$game" in
     exit 1
     ;;
 esac
-
-game="${1:-}"
-out="${2:-Rustfighter}"
-if [ -z "$game" ]; then
-    echo "usage: $0 <game-folder> [output-dir]" >&2
-    exit 2
-fi
 if [ ! -f "$game/INDEX.SF2" ] && [ ! -f "$game/index.sf2" ]; then
     echo "error: $game does not contain INDEX.SF2 (is that the extracted game folder?)" >&2
     exit 1
